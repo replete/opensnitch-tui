@@ -5,10 +5,6 @@ edition = "2024"
 
 [[bin]]
 name = "opensnitch-tui"
-path = "src/server.rs"
-
-[[bin]]
-name = "opensnitch-tui-1"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,29 +1,24 @@
-use tonic::{transport::Server, Request, Response, Status};
+use std::net::SocketAddr;
 
-use crate::opensnitch_tui::ui_server::Ui;
-use crate::opensnitch_tui::ui_server::UiServer;
-use crate::opensnitch_tui::{PingRequest, PingReply, Statistics};
+use tonic::{Request, Response, Status, transport::Server};
 
-use std::sync::mpsc;
-use std::thread;
+use crate::event::{AppEvent, Event};
+use crate::opensnitch_proto::pb::ui_server::Ui;
+use crate::opensnitch_proto::pb::ui_server::UiServer;
+use crate::opensnitch_proto::pb::{PingReply, PingRequest, Statistics};
 
-pub mod opensnitch_tui {
-    tonic::include_proto!("protocol");
-}
+use tokio::sync::mpsc;
 
 #[derive(Debug)]
-pub struct MyUI {
-    pub tx: mpsc::Sender<Statistics>,
+pub struct OpenSnitchUIGrpcServer {
+    pub sender: mpsc::UnboundedSender<Event>,
 }
 
 #[tonic::async_trait]
-impl Ui for MyUI {
-    async fn ping(
-        &self,
-        request: Request<PingRequest>,
-    ) -> Result<Response<PingReply>, Status> {
+impl Ui for OpenSnitchUIGrpcServer {
+    async fn ping(&self, request: Request<PingRequest>) -> Result<Response<PingReply>, Status> {
         let stats: Statistics = request.get_ref().stats.as_ref().unwrap().clone();
-        let _ = self.tx.send(stats);
+        let _ = self.sender.send(Event::App(AppEvent::Update(stats)));
 
         let reply = PingReply {
             id: request.get_ref().id,
@@ -33,29 +28,32 @@ impl Ui for MyUI {
     }
 }
 
-fn recv_stats(rx: mpsc::Receiver<Statistics>) {
-    thread::spawn(move || {
-        while let Ok(msg) = rx.recv() {
-            println!("Got a request: {:?}", msg);
-        }
-    });
+#[derive(Debug)]
+pub struct OpenSnitchUIServer {
+    address: SocketAddr,
+    sender: mpsc::UnboundedSender<Event>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Unix domain sockets unsupported due to upstream "authority" handling bug
-    let addr = "127.0.0.1:50051".parse()?;
-    let (tx, rx) = mpsc::channel();
+impl OpenSnitchUIServer {
+    pub fn new(sender: mpsc::UnboundedSender<Event>) -> Self {
+        // Unix domain sockets unsupported due to upstream "authority" handling bug
+        Self {
+            address: "127.0.0.1:50051".parse().unwrap(),
+            sender: sender,
+        }
+    }
 
-    let myui = MyUI{
-        tx: tx,
-    };
-    recv_stats(rx);
-
-    Server::builder()
-        .add_service(UiServer::new(myui))
-        .serve(addr)
-        .await?;
-
-    Ok(())
+    pub fn spawn_and_run(&self) {
+        let sender_handle = self.sender.clone();
+        let address = self.address.clone();
+        tokio::spawn(async move {
+            let grpc_server = OpenSnitchUIGrpcServer {
+                sender: sender_handle,
+            };
+            let _ = Server::builder()
+                .add_service(UiServer::new(grpc_server))
+                .serve(address)
+                .await;
+        });
+    }
 }

@@ -1,4 +1,6 @@
 use crate::event::{AppEvent, Event, EventHandler};
+use crate::opensnitch_proto::pb::Statistics;
+use crate::server::OpenSnitchUIServer;
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
@@ -13,14 +15,22 @@ pub struct App {
     pub counter: u8,
     /// Event handler.
     pub events: EventHandler,
+    /// Server
+    pub server: OpenSnitchUIServer,
+    /// Latest stats to present to UI.
+    pub current_stats: Statistics,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let events_handler = EventHandler::new();
+        let server = OpenSnitchUIServer::new(events_handler.sender.clone());
         Self {
             running: true,
             counter: 0,
-            events: EventHandler::new(),
+            events: events_handler,
+            server: server,
+            current_stats: Statistics::default(),
         }
     }
 }
@@ -33,6 +43,7 @@ impl App {
 
     /// Run the application's main loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
+        self.server.spawn_and_run();
         while self.running {
             terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             match self.events.next().await? {
@@ -46,8 +57,8 @@ impl App {
                     _ => {}
                 },
                 Event::App(app_event) => match app_event {
-                    AppEvent::Increment => self.increment_counter(),
-                    AppEvent::Decrement => self.decrement_counter(),
+                    AppEvent::Update(stats) => self.update(stats),
+                    AppEvent::Reset => self.reset_counter(),
                     AppEvent::Quit => self.quit(),
                 },
             }
@@ -62,8 +73,7 @@ impl App {
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.events.send(AppEvent::Quit)
             }
-            KeyCode::Right => self.events.send(AppEvent::Increment),
-            KeyCode::Left => self.events.send(AppEvent::Decrement),
+            KeyCode::Char('r' | 'R') => self.events.send(AppEvent::Reset),
             // Other handlers you could add here.
             _ => {}
         }
@@ -81,11 +91,12 @@ impl App {
         self.running = false;
     }
 
-    pub fn increment_counter(&mut self) {
+    pub fn update(&mut self, stats: Statistics) {
         self.counter = self.counter.saturating_add(1);
+        self.current_stats = stats;
     }
 
-    pub fn decrement_counter(&mut self) {
-        self.counter = self.counter.saturating_sub(1);
+    pub fn reset_counter(&mut self) {
+        self.counter = 0;
     }
 }

@@ -2,6 +2,8 @@ use crate::app::App;
 
 pub mod app;
 pub mod event;
+pub mod opensnitch_proto;
+pub mod server;
 pub mod ui;
 
 #[tokio::main]
