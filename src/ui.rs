@@ -16,9 +16,13 @@ impl Widget for &App {
     // - https://docs.rs/ratatui/latest/ratatui/widgets/index.html
     // - https://github.com/ratatui/ratatui/tree/master/examples
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let areas =
-            Layout::vertical([Constraint::Max(16), Constraint::Max(5), Constraint::Max(10)])
-                .split(area);
+        let areas = Layout::vertical([
+            Constraint::Max(7),
+            Constraint::Max(5),
+            Constraint::Max(10),
+            Constraint::Max(1),
+        ])
+        .split(area);
         let stats_block = Block::bordered()
             .title("OpenSnitch")
             .title_alignment(Alignment::Center)
@@ -26,18 +30,10 @@ impl Widget for &App {
 
         let stats_text = format!(
             "STATISTICS\n\
-                `Esc` | `Ctrl-C` | `q` -> quit // `r` -> reset rx ping counter.\n\
-                Rx Pings: {}\n\
-                daemon_version: {}\n\
-                rules: {}\n\
-                uptime: {}\n\
-                dns_responses: {}\n\
-                connections: {}\n\
-                ignored: {}\n\
-                accepted: {}\n\
-                dropped: {}\n\
-                rule_hits: {}\n\
-                rule_misses: {}",
+                rx pings: {} | daemon version: {} | rules: {}\n\
+                uptime: {} | dns_responses: {} | connections: {}\n\
+                ignored: {} | accepted: {} | dropped: {}\n\
+                rule_hits: {} | rule_misses: {}",
             self.rx_pings,
             self.current_stats.daemon_version,
             self.current_stats.rules,
@@ -133,6 +129,18 @@ impl Widget for &App {
             .bg(Color::Black);
 
         connection_paragraph.render(areas[2], buf);
+
+        // Controls
+        let controls_text = format!(
+            "\
+        `ctrl+c` -> quit | `a` -> accept connection 12h | `r` -> drop connection 12h"
+        );
+
+        let controls_paragraph = Paragraph::new(controls_text)
+            .bg(Color::DarkGray)
+            .fg(Color::White);
+
+        controls_paragraph.render(areas[3], buf);
     }
 }
 

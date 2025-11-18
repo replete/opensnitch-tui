@@ -93,7 +93,6 @@ impl App {
                     AppEvent::NotificationReplyTypeError(_) => {} // abtodo
                     AppEvent::AskRule(evt) => self.update_connection(evt),
                     AppEvent::TestNotify => self.test_notify().await,
-                    AppEvent::Reset => self.reset_counter(),
                     AppEvent::Quit => self.quit(),
                 },
             }
@@ -104,11 +103,9 @@ impl App {
     /// Handles the key events and updates the state of [`App`].
     pub fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
-            KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.events.send(AppEvent::Quit)
             }
-            KeyCode::Char('r' | 'R') => self.events.send(AppEvent::Reset),
             KeyCode::Char('t' | 'T') => self.events.send(AppEvent::TestNotify),
             // Other handlers you could add here.
             _ => {}
@@ -134,10 +131,6 @@ impl App {
     pub fn update_stats(&mut self, stats: Statistics) {
         self.rx_pings = self.rx_pings.saturating_add(1);
         self.current_stats = stats;
-    }
-
-    pub fn reset_counter(&mut self) {
-        self.rx_pings = 0;
     }
 
     pub async fn test_notify(&mut self) {

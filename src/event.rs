@@ -42,8 +42,6 @@ pub enum AppEvent {
     AskRule(ConnectionEvent),
     /// abtodo: Test-only trigger a notification that does nothing.
     TestNotify,
-    /// Reset the counter.
-    Reset,
     /// Quit the application.
     Quit,
 }
