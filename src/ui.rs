@@ -16,7 +16,9 @@ impl Widget for &App {
     // - https://docs.rs/ratatui/latest/ratatui/widgets/index.html
     // - https://github.com/ratatui/ratatui/tree/master/examples
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let areas = Layout::vertical([Constraint::Max(16), Constraint::Max(5)]).split(area);
+        let areas =
+            Layout::vertical([Constraint::Max(16), Constraint::Max(5), Constraint::Max(10)])
+                .split(area);
         let stats_block = Block::bordered()
             .title("OpenSnitch")
             .title_alignment(Alignment::Center)
@@ -85,6 +87,52 @@ impl Widget for &App {
             .bg(Color::Black);
 
         list.render(areas[1], buf);
+
+        // Connection controls
+        let connection_block = Block::bordered()
+            .title("New Connections")
+            .title_alignment(Alignment::Center)
+            .border_type(BorderType::Rounded);
+
+        let mut connection_text = String::default();
+        match &self.current_connection {
+            None => {}
+            Some(info) => {
+                // Don't just leave field blank if not populated.
+                let dst_host_string = if info.connection.dst_host.is_empty() {
+                    "-"
+                } else {
+                    &info.connection.dst_host
+                };
+
+                connection_text = format!(
+                    "\
+                src       {} / {}\n\
+                dst       {} / {}\n\
+                proto     {}\n\
+                dst host  {}\n\
+                uid       {}\n\
+                pid       {}\n\
+                ppath     {}",
+                    info.connection.src_ip,
+                    info.connection.src_port,
+                    info.connection.dst_ip,
+                    info.connection.dst_port,
+                    info.connection.protocol,
+                    dst_host_string,
+                    info.connection.user_id,
+                    info.connection.process_id,
+                    info.connection.process_path,
+                );
+            }
+        }
+
+        let connection_paragraph = Paragraph::new(connection_text)
+            .block(connection_block)
+            .fg(Color::Cyan)
+            .bg(Color::Black);
+
+        connection_paragraph.render(areas[2], buf);
     }
 }
 

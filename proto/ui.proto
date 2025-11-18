@@ -6,7 +6,7 @@ option go_package = "github.com/evilsocket/opensnitch/daemon/ui/protocol";
 
 service UI {
     rpc Ping(PingRequest) returns (PingReply) {}
-    // rpc AskRule (Connection) returns (Rule) {}
+    rpc AskRule (Connection) returns (Rule) {}
     rpc Subscribe (ClientConfig) returns (ClientConfig) {}
     rpc Notifications (stream NotificationReply) returns (stream Notification) {}
     rpc PostAlert(Alert) returns (MsgResponse) {}

@@ -1,5 +1,5 @@
-use crate::event::{AppEvent, Event, EventHandler};
-use crate::opensnitch_proto::pb::{Alert, Notification, Statistics};
+use crate::event::{AppEvent, ConnectionEvent, Event, EventHandler};
+use crate::opensnitch_proto::pb::{Alert, Connection, Notification, Rule, Statistics};
 use crate::server::OpenSnitchUIServer;
 use ratatui::{
     DefaultTerminal,
@@ -32,6 +32,10 @@ pub struct App {
     /// The sender handle gets replaced to the latest client connection.
     /// Race protection enabled by the mutex.
     pub notification_sender: Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
+    // Info on the current connection awaiting a rule determination.
+    pub current_connection: Option<ConnectionEvent>,
+    // Rule sender.
+    pub rule_sender: mpsc::Sender<Rule>,
 }
 
 impl Default for App {
@@ -40,7 +44,9 @@ impl Default for App {
         let server = OpenSnitchUIServer::new(events_handler.sender.clone());
         // Hold a dummy sender channel until a client actually connects to server and swaps in a usable
         // sender handle.
-        let (dummy_sender, _) = mpsc::channel(1);
+        let (dummy_notification_sender, _) = mpsc::channel(1);
+        let (dummy_rule_sender, _) = mpsc::channel(1);
+
         Self {
             running: true,
             rx_pings: 0,
@@ -49,7 +55,9 @@ impl Default for App {
             current_stats: Statistics::default(),
             current_alerts: Vec::new(),
             alert_list_state: ListState::default(),
-            notification_sender: Arc::new(Mutex::new(dummy_sender)),
+            notification_sender: Arc::new(Mutex::new(dummy_notification_sender)),
+            current_connection: None,
+            rule_sender: dummy_rule_sender,
         }
     }
 }
@@ -62,7 +70,11 @@ impl App {
 
     /// Run the application's main loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
-        self.server.spawn_and_run(&self.notification_sender);
+        // Rule receiver - borrowed by the server
+        let (rule_sender, rule_receiver) = mpsc::channel(1);
+        self.rule_sender = rule_sender;
+        self.server
+            .spawn_and_run(&self.notification_sender, rule_receiver);
         while self.running {
             terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             match self.events.next().await? {
@@ -76,9 +88,10 @@ impl App {
                     _ => {}
                 },
                 Event::App(app_event) => match app_event {
-                    AppEvent::Update(stats) => self.update(stats),
+                    AppEvent::Update(stats) => self.update_stats(stats),
                     AppEvent::Alert(alert) => self.current_alerts.push(alert),
                     AppEvent::NotificationReplyTypeError(_) => {} // abtodo
+                    AppEvent::AskRule(evt) => self.update_connection(evt),
                     AppEvent::TestNotify => self.test_notify().await,
                     AppEvent::Reset => self.reset_counter(),
                     AppEvent::Quit => self.quit(),
@@ -104,17 +117,21 @@ impl App {
     }
 
     /// Handles the tick event of the terminal.
-    ///
-    /// The tick event is where you can update the state of your application with any logic that
-    /// needs to be updated at a fixed frame rate. E.g. polling a server, updating an animation.
-    pub fn tick(&self) {}
+    pub fn tick(&mut self) {
+        let now = std::time::SystemTime::now();
+        if self.current_connection.is_some()
+            && now >= self.current_connection.as_ref().unwrap().expiry_ts
+        {
+            self.current_connection = None;
+        }
+    }
 
     /// Set running to false to quit the application.
     pub fn quit(&mut self) {
         self.running = false;
     }
 
-    pub fn update(&mut self, stats: Statistics) {
+    pub fn update_stats(&mut self, stats: Statistics) {
         self.rx_pings = self.rx_pings.saturating_add(1);
         self.current_stats = stats;
     }
@@ -136,5 +153,9 @@ impl App {
                 sys_firewall: None,
             }))
             .await;
+    }
+
+    pub fn update_connection(&mut self, evt: ConnectionEvent) {
+        self.current_connection = Some(evt);
     }
 }

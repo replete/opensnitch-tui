@@ -1,8 +1,8 @@
-use crate::opensnitch_proto::pb::{Alert, Statistics};
+use crate::opensnitch_proto::pb::{Alert, Connection, Statistics};
 use color_eyre::eyre::OptionExt;
 use futures::{FutureExt, StreamExt};
 use ratatui::crossterm::event::Event as CrosstermEvent;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 
 /// The frequency at which tick events are emitted.
@@ -38,12 +38,22 @@ pub enum AppEvent {
     Alert(Alert),
     /// Notification reply from opensnitch daemon containing an error.
     NotificationReplyTypeError(String),
+    /// Daemon trapped a new connection that requires action.
+    AskRule(ConnectionEvent),
     /// abtodo: Test-only trigger a notification that does nothing.
     TestNotify,
     /// Reset the counter.
     Reset,
     /// Quit the application.
     Quit,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConnectionEvent {
+    /// The connection that created this event.
+    pub connection: Connection,
+    /// Expiry timestamp at which point some default action is taken.
+    pub expiry_ts: SystemTime,
 }
 
 /// Terminal event handler.

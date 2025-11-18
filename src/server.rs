@@ -1,14 +1,18 @@
+use std::alloc::System;
 use std::net::SocketAddr;
+use std::time::{Duration, SystemTime};
 
-use tonic::Streaming;
+use futures::channel::mpsc::TryRecvError;
+use tokio::time::timeout;
+use tonic::{Code, Streaming};
 use tonic::{Request, Response, Status, transport::Server};
 
-use crate::event::{AppEvent, Event};
+use crate::event::{AppEvent, ConnectionEvent, Event};
 use crate::opensnitch_proto::pb::ui_server::Ui;
 use crate::opensnitch_proto::pb::ui_server::UiServer;
 use crate::opensnitch_proto::pb::{
-    Alert, ClientConfig, MsgResponse, Notification, NotificationReply, NotificationReplyCode,
-    PingReply, PingRequest, Statistics,
+    Alert, ClientConfig, Connection, MsgResponse, Notification, NotificationReply,
+    NotificationReplyCode, PingReply, PingRequest, Rule, Statistics,
 };
 
 use std::sync::Arc;
@@ -19,6 +23,7 @@ use tokio_stream::wrappers::ReceiverStream;
 pub struct OpenSnitchUIGrpcServer {
     pub event_sender: mpsc::UnboundedSender<Event>,
     pub app_to_server_notification_sender: Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
+    pub app_to_server_rule_receiver: Mutex<mpsc::Receiver<Rule>>,
 }
 
 #[tonic::async_trait]
@@ -45,6 +50,49 @@ impl Ui for OpenSnitchUIGrpcServer {
         };
 
         Ok(Response::new(reply))
+    }
+
+    async fn ask_rule(&self, request: Request<Connection>) -> Result<Response<Rule>, Status> {
+        // In theory, the current proto spec and OpenSnitch daemon design doesn't seem
+        // to permit opening concurrent `AskRule` requests.
+        // If this was to be supported in the future, we'd want to mix in some UID
+        // for request routing/identification.
+        let connection = ConnectionEvent {
+            connection: request.get_ref().clone(),
+            expiry_ts: SystemTime::now() + Duration::new(30, 0), // abtodo const-ify
+        };
+        let _ = self
+            .event_sender
+            .send(Event::App(AppEvent::AskRule(connection)));
+
+        // abtodo
+        let timeout = SystemTime::now() + Duration::new(30, 100000);
+        let mut interval = tokio::time::interval(Duration::new(0, 100000)); // 100ms
+        let mut maybe_rule;
+        loop {
+            interval.tick().await;
+            // abtodo consider timeout on lock for additional foot safety?
+            // abtodo can i clean up this mess and return to tokio::time::timeout given the mutex revelation?
+            let mut recv_lock = self.app_to_server_rule_receiver.lock().await;
+            maybe_rule = recv_lock.try_recv();
+            match maybe_rule {
+                Ok(_) => break,
+                Err(err) => {
+                    match err {
+                        mpsc::error::TryRecvError::Empty => {}
+                        _ => break, // Not inspecting further
+                    }
+                }
+            }
+            if SystemTime::now() >= timeout {
+                break;
+            }
+        }
+
+        match maybe_rule {
+            Ok(rule) => Ok(Response::new(rule)),
+            Err(err) => Err(Status::internal(format!("No rule created: {}", err))),
+        }
     }
 
     async fn subscribe(
@@ -140,14 +188,17 @@ impl OpenSnitchUIServer {
     pub fn spawn_and_run(
         &self,
         app_to_server_notification_sender: &Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
+        app_to_server_rule_receiver: mpsc::Receiver<Rule>,
     ) {
         let event_sender_handle = self.event_sender.clone();
         let address = self.address.clone();
         let notification_sender = Arc::clone(&app_to_server_notification_sender);
+        let rule_receiver = Mutex::new(app_to_server_rule_receiver);
         tokio::spawn(async move {
             let grpc_server = OpenSnitchUIGrpcServer {
                 event_sender: event_sender_handle,
                 app_to_server_notification_sender: notification_sender,
+                app_to_server_rule_receiver: rule_receiver,
             };
             let _ = Server::builder()
                 .add_service(UiServer::new(grpc_server))
