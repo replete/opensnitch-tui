@@ -13,6 +13,7 @@ pub mod ui;
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let terminal = ratatui::init();
+    // abtodo some CLI flags for bind addr/port, default actions, etc.
     let result = App::new().run(terminal).await;
     ratatui::restore();
     result
