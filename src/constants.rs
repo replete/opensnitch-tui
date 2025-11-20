@@ -62,15 +62,52 @@ pub mod action {
 #[allow(non_upper_case_globals)]
 pub mod duration {
     pub const DURATION_FIELD: &str = "duration";
-    pub const DURATION_UNTIL_RESTART: &str = "until restart";
-    pub const DURATION_ALWAYS: &str = "always";
-    pub const DURATION_ONCE: &str = "once";
-    pub const DURATION_12h: &str = "12h";
-    pub const DURATION_1h: &str = "1h";
-    pub const DURATION_30m: &str = "30m";
-    pub const DURATION_15m: &str = "15m";
-    pub const DURATION_5m: &str = "5m";
-    pub const DURATION_30s: &str = "30s";
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum Duration {
+        UntilRestart,
+        Always,
+        Once,
+        Hours12,
+        Hours1,
+        Minutes30,
+        Minutes15,
+        Minutes5,
+        Seconds30,
+    }
+
+    impl Duration {
+        /// Validates input duration and returns enum variant.
+        pub fn new(s: &String) -> Result<Duration, ()> {
+            match s.as_str() {
+                "until restart" => Ok(Duration::UntilRestart),
+                "always" => Ok(Duration::Always),
+                "once" => Ok(Duration::Once),
+                "12h" => Ok(Duration::Hours12),
+                "1h" => Ok(Duration::Hours1),
+                "30m" => Ok(Duration::Minutes30),
+                "15m" => Ok(Duration::Minutes15),
+                "5m" => Ok(Duration::Minutes5),
+                "30s" => Ok(Duration::Seconds30),
+                _ => Err(()),
+            }
+        }
+
+        /// Enum as string for OpenSnitch daemon.
+        pub fn get_str(&self) -> &str {
+            match self {
+                Duration::UntilRestart => "until restart",
+                Duration::Always => "always",
+                Duration::Once => "once",
+                Duration::Hours12 => "12h",
+                Duration::Hours1 => "1h",
+                Duration::Minutes30 => "30m",
+                Duration::Minutes15 => "15m",
+                Duration::Minutes5 => "5m",
+                Duration::Seconds30 => "30s",
+            }
+        }
+    }
 }
 
 /// Default action values.
@@ -93,6 +130,7 @@ pub mod default_action {
             }
         }
 
+        /// Enum as string for OpenSnitch daemon.
         pub fn get_str(&self) -> &str {
             match self {
                 DefaultAction::Allow => "allow",

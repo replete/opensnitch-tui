@@ -7,7 +7,7 @@ use ratatui::{
     widgets::ListState,
 };
 
-use crate::constants::{self, default_action};
+use crate::constants::{self, default_action, duration};
 use crate::operator_util;
 
 use std::net::SocketAddr;
@@ -44,11 +44,17 @@ pub struct App {
     bind_address: SocketAddr,
     /// Default action to be sent to connected daemons.
     default_action: default_action::DefaultAction,
+    /// Temporary rule duration.
+    pub temp_rule_duration: duration::Duration,
 }
 
 impl App {
     /// Constructs a new instance of [`App`].
-    pub fn new(bind_string: String, default_action_in: String) -> Result<Self, String> {
+    pub fn new(
+        bind_string: String,
+        default_action_in: String,
+        temp_rule_duration: String,
+    ) -> Result<Self, String> {
         if bind_string.starts_with("unix") {
             return Err(String::from("Unix domain sockets not supported"));
         }
@@ -64,6 +70,14 @@ impl App {
         let maybe_default_action = default_action::DefaultAction::new(&default_action_in);
         if maybe_default_action.is_err() {
             return Err(format!("Invalid default action: {}", default_action_in));
+        }
+
+        let maybe_temp_rule_duration = duration::Duration::new(&temp_rule_duration);
+        if maybe_temp_rule_duration.is_err() {
+            return Err(format!(
+                "Invalid temporary rule duration: {}",
+                temp_rule_duration
+            ));
         }
 
         let events_handler = EventHandler::new();
@@ -87,6 +101,7 @@ impl App {
             rule_sender: dummy_rule_sender,
             bind_address: maybe_bind_addr.unwrap(),
             default_action: maybe_default_action.unwrap(),
+            temp_rule_duration: maybe_temp_rule_duration.unwrap(),
         })
     }
 
@@ -135,18 +150,16 @@ impl App {
             }
             KeyCode::Char('t' | 'T') => self.events.send(AppEvent::TestNotify),
             KeyCode::Char('a' | 'A') => {
-                let rule = self.make_temp_rule(true /* is_allow */);
-                if rule.is_some() {
-                    self.send_rule(rule.unwrap());
-                    self.clear_connection();
-                }
+                self.make_and_send_rule(true /* is_allow */, self.temp_rule_duration);
             }
             KeyCode::Char('d' | 'D') => {
-                let rule = self.make_temp_rule(false /* is_allow */);
-                if rule.is_some() {
-                    self.send_rule(rule.unwrap());
-                    self.clear_connection();
-                }
+                self.make_and_send_rule(false /* is_allow */, self.temp_rule_duration);
+            }
+            KeyCode::Char('j' | 'J') => {
+                self.make_and_send_rule(true /* is_allow */, duration::Duration::Always);
+            }
+            KeyCode::Char('l' | 'L') => {
+                self.make_and_send_rule(false /* is_allow */, duration::Duration::Always);
             }
             _ => {}
         }
@@ -202,12 +215,12 @@ impl App {
         self.current_connection = None;
     }
 
-    /// Generate a temporary rule for the current connection being handled by this server.
+    /// Generate a rule for the current connection being handled by this server.
     /// Matches on user ID && process path && IP dst && l4 port && l4 protocol.
     /// abtodo maybe process hash too
     /// Returns `none` if there is no current connection.
     /// * is_allow: Whether the rule for this connection should allow or deny the flow.
-    fn make_temp_rule(&self, is_allow: bool) -> Option<Rule> {
+    fn make_rule(&self, is_allow: bool, duration: duration::Duration) -> Option<Rule> {
         if self.current_connection.is_none() {
             return None;
         }
@@ -232,7 +245,7 @@ impl App {
         } else {
             constants::action::ACTION_DENY
         });
-        let duration = String::from(constants::duration::DURATION_12h);
+        let duration = String::from(duration.get_str());
         let pretty_proc_path = conn.process_path.clone().replace("/", "-");
         let maybe_operator_json = serde_json::to_string(&operators);
         if maybe_operator_json.is_err() {
@@ -273,6 +286,14 @@ impl App {
                 panic!("Unable to send rule: {}", err);
             }
             _ => {}
+        }
+    }
+
+    fn make_and_send_rule(&mut self, is_allow: bool, duration: duration::Duration) {
+        let rule = self.make_rule(is_allow, duration);
+        if rule.is_some() {
+            self.send_rule(rule.unwrap());
+            self.clear_connection();
         }
     }
 }

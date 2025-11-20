@@ -15,7 +15,7 @@ impl Widget for &App {
             Constraint::Max(6),
             Constraint::Max(9),
             Constraint::Max(5),
-            Constraint::Max(1),
+            Constraint::Max(2),
         ])
         .split(area);
         let stats_block = Block::bordered()
@@ -135,12 +135,16 @@ impl Widget for &App {
         // Controls footer
         let controls_text = format!(
             "\
-        `ctrl+c` -> quit | `a` -> accept connection 12h | `d` -> deny connection 12h"
+        `ctrl+c` -> quit | `a` -> allow connection {} | `d` -> deny connection {}\n\
+        `j` -> allow connection forever | `l` -> deny connection forever",
+            self.temp_rule_duration.get_str(),
+            self.temp_rule_duration.get_str(),
         );
 
         let controls_paragraph = Paragraph::new(controls_text)
             .bg(Color::DarkGray)
-            .fg(Color::White);
+            .fg(Color::White)
+            .alignment(Alignment::Center);
 
         controls_paragraph.render(areas[3], buf);
     }

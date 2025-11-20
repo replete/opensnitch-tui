@@ -15,8 +15,12 @@ async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let terminal = ratatui::init();
     // abtodo some CLI flags for bind addr/port, default actions, etc.
-    let app =
-        App::new(String::from("127.0.0.1:50051"), String::from("deny")).expect("Initialization");
+    let app = App::new(
+        String::from("127.0.0.1:50051"),
+        String::from("deny"),
+        String::from("12h"),
+    )
+    .expect("Initialization");
     let result = app.run(terminal).await;
     ratatui::restore();
     result
