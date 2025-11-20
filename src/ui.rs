@@ -2,7 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::palette::tailwind::SLATE,
-    style::{Color, Stylize},
+    style::{Color, Style, Stylize},
     widgets::{Block, BorderType, List, ListItem, Paragraph, Widget},
 };
 
@@ -10,26 +10,21 @@ use crate::app::App;
 
 impl Widget for &App {
     /// Renders the user interface widgets.
-    ///
-    // This is where you add new widgets.
-    // See the following resources:
-    // - https://docs.rs/ratatui/latest/ratatui/widgets/index.html
-    // - https://github.com/ratatui/ratatui/tree/master/examples
     fn render(self, area: Rect, buf: &mut Buffer) {
         let areas = Layout::vertical([
-            Constraint::Max(7),
+            Constraint::Max(6),
+            Constraint::Max(9),
             Constraint::Max(5),
-            Constraint::Max(10),
             Constraint::Max(1),
         ])
         .split(area);
         let stats_block = Block::bordered()
-            .title("OpenSnitch")
+            .title(" OpenSnitch ")
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded);
 
         let stats_text = format!(
-            "STATISTICS\n\
+            "\
                 rx pings: {} | daemon version: {} | rules: {}\n\
                 uptime: {} | dns_responses: {} | connections: {}\n\
                 ignored: {} | accepted: {} | dropped: {}\n\
@@ -54,41 +49,19 @@ impl Widget for &App {
 
         stats_paragraph.render(areas[0], buf);
 
-        // Alerts list
-        let alerts_block = Block::bordered()
-            .title(format!("Alerts ({})", self.current_alerts.len()))
-            .title_alignment(Alignment::Center)
-            .border_type(BorderType::Rounded);
-
-        // abtodo: prettify proto enums to text
-        // abtodo: make this scrollable
-        let items: Vec<ListItem> = self
-            .current_alerts
-            .iter()
-            .enumerate()
-            .map(|(i, alert)| {
-                let color = alternate_colors(i);
-                let alert_text = format!(
-                    "type: {} action: {} priority: {} what: {}\n",
-                    alert.r#type, alert.action, alert.priority, alert.what,
-                );
-                ListItem::from(alert_text).bg(color)
-            })
-            .collect();
-
-        // Create a List from all list items
-        let list = List::new(items)
-            .block(alerts_block)
-            .fg(Color::Cyan)
-            .bg(Color::Black);
-
-        list.render(areas[1], buf);
-
         // Connection controls
         let connection_block = Block::bordered()
-            .title("New Connections")
+            .title(" New Connections ")
             .title_alignment(Alignment::Center)
-            .border_type(BorderType::Rounded);
+            .border_type(BorderType::Rounded)
+            .title_style(match &self.current_connection {
+                None => Style::default(),
+                Some(_) => Style::default().bold(),
+            })
+            .style(match &self.current_connection {
+                None => Style::default().fg(Color::Cyan),
+                Some(_) => Style::default().fg(Color::Yellow),
+            });
 
         let mut connection_text = String::default();
         match &self.current_connection {
@@ -125,12 +98,41 @@ impl Widget for &App {
 
         let connection_paragraph = Paragraph::new(connection_text)
             .block(connection_block)
+            .bg(Color::Black);
+
+        connection_paragraph.render(areas[1], buf);
+
+        // Alerts list
+        let alerts_block = Block::bordered()
+            .title(format!(" Alerts ({}) ", self.current_alerts.len()))
+            .title_alignment(Alignment::Center)
+            .border_type(BorderType::Rounded);
+
+        // abtodo: prettify proto enums to text
+        // abtodo: make this scrollable
+        let items: Vec<ListItem> = self
+            .current_alerts
+            .iter()
+            .enumerate()
+            .map(|(i, alert)| {
+                let color = alternate_colors(i);
+                let alert_text = format!(
+                    "type: {} action: {} priority: {} what: {}\n",
+                    alert.r#type, alert.action, alert.priority, alert.what,
+                );
+                ListItem::from(alert_text).bg(color)
+            })
+            .collect();
+
+        // Create a List from all list items
+        let list = List::new(items)
+            .block(alerts_block)
             .fg(Color::Cyan)
             .bg(Color::Black);
 
-        connection_paragraph.render(areas[2], buf);
+        list.render(areas[2], buf);
 
-        // Controls
+        // Controls footer
         let controls_text = format!(
             "\
         `ctrl+c` -> quit | `a` -> accept connection 12h | `d` -> deny connection 12h"
