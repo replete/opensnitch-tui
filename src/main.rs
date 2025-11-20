@@ -3,6 +3,7 @@ use crate::app::App;
 pub mod app;
 pub mod constants;
 pub mod event;
+pub mod opensnitch_json;
 pub mod opensnitch_proto;
 pub mod operator_util;
 pub mod serde_impl;
@@ -14,7 +15,9 @@ async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let terminal = ratatui::init();
     // abtodo some CLI flags for bind addr/port, default actions, etc.
-    let result = App::new().run(terminal).await;
+    let app =
+        App::new(String::from("127.0.0.1:50051"), String::from("deny")).expect("Initialization");
+    let result = app.run(terminal).await;
     ratatui::restore();
     result
 }

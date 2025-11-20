@@ -2,6 +2,7 @@
 /// opensnitch/ui/opensnitch/config.py
 /// opensnitch/daemon/rule/operator.go
 
+/// Operand types to label firewall rules' data blob.
 pub mod operand {
     pub const OPERAND_PROCESS_ID: &str = "process.id";
     pub const OPERAND_PROCESS_PATH: &str = "process.path";
@@ -27,6 +28,7 @@ pub mod operand {
     pub const OPERAND_LIST_NETS: &str = "lists.nets";
 }
 
+/// Firewall rule type hint.
 pub mod rule_type {
     pub const RULE_TYPE_LIST: &str = "list";
     pub const RULE_TYPE_LISTS: &str = "lists";
@@ -35,6 +37,9 @@ pub mod rule_type {
     pub const RULE_TYPE_NETWORK: &str = "network";
 }
 
+/// Firewall rule actions.
+/// Note: A daemon's "default actions" set is a narrower subset
+/// of this list, see below.
 pub mod action {
     pub const ACTION_ALLOW: &str = "allow";
     pub const ACTION_DENY: &str = "deny";
@@ -53,6 +58,7 @@ pub mod action {
     pub const ACTION_STOP: &str = "stop";
 }
 
+/// Durations for firewall rules to be applicable.
 #[allow(non_upper_case_globals)]
 pub mod duration {
     pub const DURATION_FIELD: &str = "duration";
@@ -65,4 +71,34 @@ pub mod duration {
     pub const DURATION_15m: &str = "15m";
     pub const DURATION_5m: &str = "5m";
     pub const DURATION_30s: &str = "30s";
+}
+
+/// Default action values.
+pub mod default_action {
+    #[derive(Debug, Clone, Copy)]
+    pub enum DefaultAction {
+        Allow,
+        Deny,
+        Reject,
+    }
+
+    impl DefaultAction {
+        /// Validates input action and returns enum variant.
+        pub fn new(s: &String) -> Result<DefaultAction, ()> {
+            match s.as_str() {
+                "allow" => Ok(DefaultAction::Allow),
+                "deny" => Ok(DefaultAction::Deny),
+                "reject" => Ok(DefaultAction::Reject),
+                _ => Err(()),
+            }
+        }
+
+        pub fn get_str(&self) -> &str {
+            match self {
+                DefaultAction::Allow => "allow",
+                DefaultAction::Deny => "deny",
+                DefaultAction::Reject => "reject",
+            }
+        }
+    }
 }

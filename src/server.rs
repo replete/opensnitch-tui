@@ -12,6 +12,7 @@ use crate::opensnitch_proto::pb::{
     Alert, ClientConfig, Connection, MsgResponse, Notification, NotificationReply,
     NotificationReplyCode, PingReply, PingRequest, Rule, Statistics,
 };
+use crate::{constants, opensnitch_json};
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -22,6 +23,7 @@ pub struct OpenSnitchUIGrpcServer {
     pub event_sender: mpsc::UnboundedSender<Event>,
     pub app_to_server_notification_sender: Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
     pub app_to_server_rule_receiver: Mutex<mpsc::Receiver<Rule>>,
+    default_action: String,
 }
 
 #[tonic::async_trait]
@@ -78,11 +80,21 @@ impl Ui for OpenSnitchUIGrpcServer {
         &self,
         request: Request<ClientConfig>,
     ) -> Result<Response<ClientConfig>, Status> {
-        // Be super dumb and reflect back the rx'ed config.
-        // In the future, we could use serde_json and fill in the real value for
-        // ClientConfig::Config::json(DefaultAction) per some type of tui config.
-        let reply = request.get_ref().clone();
-        Ok(Response::new(reply))
+        // Relfect back most of the rx'ed config.
+        // Be a little oversmart here and rewrite the config JSON blob with the only k-v
+        // the daemon really cares about - default action.
+        let mut reply = request.get_ref().clone();
+        let config = opensnitch_json::OpenSnitchDaemonConfig {
+            DefaultAction: self.default_action.clone(),
+        };
+        let maybe_config_json = serde_json::to_string(&config);
+        match maybe_config_json {
+            Ok(json) => {
+                reply.config = json;
+                Ok(Response::new(reply))
+            }
+            Err(err) => Err(Status::internal(err.to_string())),
+        }
     }
 
     async fn notifications(
@@ -149,35 +161,30 @@ impl Ui for OpenSnitchUIGrpcServer {
     }
 }
 
-#[derive(Debug)]
-pub struct OpenSnitchUIServer {
-    address: SocketAddr,
-    event_sender: mpsc::UnboundedSender<Event>,
-}
+#[derive(Debug, Default)]
+pub struct OpenSnitchUIServer {}
 
 impl OpenSnitchUIServer {
-    pub fn new(event_sender: mpsc::UnboundedSender<Event>) -> Self {
-        // Unix domain sockets unsupported due to upstream "authority" handling bug
-        Self {
-            address: "127.0.0.1:50051".parse().unwrap(),
-            event_sender: event_sender,
-        }
-    }
-
+    /// Note for address: Unix domain sockets unsupported due to upstream "authority" handling bug
     pub fn spawn_and_run(
         &self,
+        address: SocketAddr,
+        event_sender: mpsc::UnboundedSender<Event>,
         app_to_server_notification_sender: &Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
         app_to_server_rule_receiver: mpsc::Receiver<Rule>,
+        default_action: constants::default_action::DefaultAction,
     ) {
-        let event_sender_handle = self.event_sender.clone();
-        let address = self.address.clone();
+        let address = address.clone();
+        let event_sender_handle = event_sender.clone();
         let notification_sender = Arc::clone(&app_to_server_notification_sender);
         let rule_receiver = Mutex::new(app_to_server_rule_receiver);
+        let default_action_str = String::from(default_action.get_str());
         tokio::spawn(async move {
             let grpc_server = OpenSnitchUIGrpcServer {
                 event_sender: event_sender_handle,
                 app_to_server_notification_sender: notification_sender,
                 app_to_server_rule_receiver: rule_receiver,
+                default_action: default_action_str,
             };
             let _ = Server::builder()
                 .add_service(UiServer::new(grpc_server))

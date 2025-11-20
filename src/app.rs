@@ -7,9 +7,10 @@ use ratatui::{
     widgets::ListState,
 };
 
-use crate::constants;
+use crate::constants::{self, default_action};
 use crate::operator_util;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tonic::Status;
@@ -19,12 +20,12 @@ use tonic::Status;
 pub struct App {
     /// Is the application running?
     pub running: bool,
-    /// Rx Pings.
-    pub rx_pings: u64,
     /// Event handler.
     pub events: EventHandler,
     /// Server
     pub server: OpenSnitchUIServer,
+    /// Rx Pings.
+    pub rx_pings: u64,
     /// Latest stats to present to UI.
     pub current_stats: Statistics,
     /// Vector of alerts
@@ -35,22 +36,45 @@ pub struct App {
     /// The sender handle gets replaced to the latest client connection.
     /// Race protection enabled by the mutex.
     pub notification_sender: Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
-    // Info on the current connection awaiting a rule determination.
+    /// Info on the current connection awaiting a rule determination.
     pub current_connection: Option<ConnectionEvent>,
-    // Rule sender.
+    /// Rule sender.
     pub rule_sender: mpsc::Sender<Rule>,
+    /// gRPC server IP and port to bind to.
+    bind_address: SocketAddr,
+    /// Default action to be sent to connected daemons.
+    default_action: default_action::DefaultAction,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    /// Constructs a new instance of [`App`].
+    pub fn new(bind_string: String, default_action_in: String) -> Result<Self, String> {
+        if bind_string.starts_with("unix") {
+            return Err(String::from("Unix domain sockets not supported"));
+        }
+        let maybe_bind_addr = bind_string.parse::<SocketAddr>();
+        if maybe_bind_addr.is_err() {
+            return Err(format!(
+                "Error parsing bind address '{}' : {}",
+                bind_string,
+                maybe_bind_addr.unwrap_err()
+            ));
+        }
+
+        let maybe_default_action = default_action::DefaultAction::new(&default_action_in);
+        if maybe_default_action.is_err() {
+            return Err(format!("Invalid default action: {}", default_action_in));
+        }
+
         let events_handler = EventHandler::new();
-        let server = OpenSnitchUIServer::new(events_handler.sender.clone());
+        let server = OpenSnitchUIServer::default();
+
         // Hold a dummy sender channel until a client actually connects to server and swaps in a usable
         // sender handle.
         let (dummy_notification_sender, _) = mpsc::channel(1);
         let (dummy_rule_sender, _) = mpsc::channel(1);
 
-        Self {
+        Ok(Self {
             running: true,
             rx_pings: 0,
             events: events_handler,
@@ -61,14 +85,9 @@ impl Default for App {
             notification_sender: Arc::new(Mutex::new(dummy_notification_sender)),
             current_connection: None,
             rule_sender: dummy_rule_sender,
-        }
-    }
-}
-
-impl App {
-    /// Constructs a new instance of [`App`].
-    pub fn new() -> Self {
-        Self::default()
+            bind_address: maybe_bind_addr.unwrap(),
+            default_action: maybe_default_action.unwrap(),
+        })
     }
 
     /// Run the application's main loop.
@@ -76,8 +95,13 @@ impl App {
         // Rule receiver gets borrowed by the server
         let (rule_sender, rule_receiver) = mpsc::channel(1);
         self.rule_sender = rule_sender;
-        self.server
-            .spawn_and_run(&self.notification_sender, rule_receiver);
+        self.server.spawn_and_run(
+            self.bind_address,
+            self.events.sender.clone(),
+            &self.notification_sender,
+            rule_receiver,
+            self.default_action,
+        );
         while self.running {
             terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             match self.events.next().await? {
@@ -221,7 +245,10 @@ impl App {
 
         Some(Rule {
             created: 0,
-            name: format!("{}-{}-simple-via-tui-{}", action, duration, pretty_proc_path),
+            name: format!(
+                "{}-{}-simple-via-tui-{}",
+                action, duration, pretty_proc_path
+            ),
             description: String::default(), // abtodo some metadata like created time/TUI?
             enabled: true,
             precedence: false,
