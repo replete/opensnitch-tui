@@ -1,6 +1,3 @@
-use crate::app::App;
-// use crate::cli;
-
 pub mod alert;
 pub mod app;
 pub mod cli;
@@ -19,7 +16,7 @@ async fn main() -> color_eyre::Result<()> {
 
     color_eyre::install()?;
     let terminal = ratatui::init();
-    let app = App::new(
+    let app = app::App::new(
         matches.get_one::<String>("ip_port").unwrap(),
         matches.get_one::<String>("default_action").unwrap(),
         matches.get_one::<String>("temp_rule_lifetime").unwrap(),
