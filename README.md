@@ -38,6 +38,15 @@ The instructions above apply when the OpenSnitch daemon and GUI/TUI are running 
 
 **Note that only one of the GUI or TUI can run at one time, so kill the `opensnitch-ui` or `opensnitch-tui` process to run the other.**
 
+### Build and Run
+
+```sh
+$ cd $THIS_REPO
+$ cargo build --release
+$ cp target/release/opensnitch-tui $SOMEWHERE_IN_YOUR_PATH
+$ opensnitch-tui --help
+```
+
 ## Disclaimer
 
 I'm pretty new to Rust and am using this project as an exercise to learn more. Use this software at your own risk. Contributions are welcome.
