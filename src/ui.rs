@@ -144,8 +144,8 @@ impl Widget for &App {
         // Controls footer
         let controls_text = format!(
             "\
-        `ctrl+c` → quit | `a/d` → (allow/deny) connection {}\n\
-        `j/l` → (allow/deny) connection forever | `up/down` → scroll alerts",
+        `ctrl+C` → quit | `A/D` → (allow/deny) connection {}\n\
+        `J/L` → (allow/deny) connection forever | `up/down` → scroll alerts",
             self.temp_rule_lifetime.get_str(),
         );
 

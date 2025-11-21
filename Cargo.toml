@@ -3,10 +3,6 @@ name = "opensnitch-tui"
 version = "0.0.1"
 edition = "2024"
 
-[[bin]]
-name = "opensnitch-tui"
-path = "src/main.rs"
-
 [dependencies]
 futures = "0.3.31"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
