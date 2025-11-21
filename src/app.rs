@@ -46,7 +46,10 @@ pub struct App {
     /// Default action to be sent to connected daemons.
     default_action: default_action::DefaultAction,
     /// Temporary rule duration.
-    pub temp_rule_duration: duration::Duration,
+    pub temp_rule_duration: constants::duration::Duration,
+    /// The duration up to which app waits for user to make a disposition
+    /// (allow/deny) on a trapped connection.
+    connection_disposition_timeout: std::time::Duration,
 }
 
 impl App {
@@ -55,6 +58,7 @@ impl App {
         bind_string: String,
         default_action_in: String,
         temp_rule_duration: String,
+        connection_disposition_timeout_in: u64,
     ) -> Result<Self, String> {
         if bind_string.starts_with("unix") {
             return Err(String::from("Unix domain sockets not supported"));
@@ -81,6 +85,17 @@ impl App {
             ));
         }
 
+        // The client RPC context timeout in opensnitch/daemon/ui/client.go is set to 120s
+        // Subtract a few seconds just to be nice.
+        if connection_disposition_timeout_in > 115 {
+            return Err(format!(
+                "Connection disposition timeout {} cannot be over 115",
+                connection_disposition_timeout_in
+            ));
+        }
+        let connection_disposition_timeout =
+            std::time::Duration::from_secs(connection_disposition_timeout_in);
+
         let events_handler = EventHandler::new();
         let server = OpenSnitchUIServer::default();
 
@@ -103,6 +118,7 @@ impl App {
             bind_address: maybe_bind_addr.unwrap(),
             default_action: maybe_default_action.unwrap(),
             temp_rule_duration: maybe_temp_rule_duration.unwrap(),
+            connection_disposition_timeout: connection_disposition_timeout,
         })
     }
 
@@ -117,6 +133,7 @@ impl App {
             &self.notification_sender,
             rule_receiver,
             self.default_action,
+            self.connection_disposition_timeout,
         );
         while self.running {
             terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
@@ -250,7 +267,7 @@ impl App {
 
     /// Generate a rule for the current connection being handled by this server.
     /// Matches on user ID && process path && IP dst && l4 port && l4 protocol.
-    /// abtodo maybe process hash too
+    /// abtodo: Consider including process hash for extra strictness.
     /// Returns `none` if there is no current connection.
     /// * is_allow: Whether the rule for this connection should allow or deny the flow.
     fn make_rule(&self, is_allow: bool, duration: duration::Duration) -> Option<pb::Rule> {
@@ -295,7 +312,7 @@ impl App {
                 "{}-{}-simple-via-tui-{}",
                 action, duration, pretty_proc_path
             ),
-            description: String::default(), // abtodo some metadata like created time/TUI?
+            description: String::default(),
             enabled: true,
             precedence: false,
             nolog: false,

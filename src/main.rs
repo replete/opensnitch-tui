@@ -20,8 +20,9 @@ async fn main() -> color_eyre::Result<()> {
         String::from("127.0.0.1:50051"),
         String::from("deny"),
         String::from("12h"),
+        30,
     )
-    .expect("Initialization");
+    .expect("Initialization failed: ");
     let result = app.run(terminal).await;
     ratatui::restore();
     result
