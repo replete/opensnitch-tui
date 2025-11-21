@@ -1,5 +1,6 @@
 use crate::app::App;
 
+pub mod alert;
 pub mod app;
 pub mod constants;
 pub mod event;

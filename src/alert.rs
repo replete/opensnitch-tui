@@ -1,0 +1,92 @@
+use std::time;
+
+use crate::opensnitch_proto;
+
+#[derive(Clone, Debug)]
+pub enum Priority {
+    Low,
+    Medium,
+    High,
+}
+
+impl Priority {
+    pub fn new(v: i32) -> Priority {
+        match v {
+            0 => Priority::Low,
+            1 => Priority::Medium,
+            _ => Priority::High,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Type {
+    Error,
+    Warning,
+    Info,
+}
+
+impl Type {
+    pub fn new(v: i32) -> Type {
+        match v {
+            0 => Type::Error,
+            1 => Type::Warning,
+            _ => Type::Info,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum What {
+    Generic,
+    ProcMonitor,
+    Firewall,
+    Connection,
+    Rule,
+    Netlink,
+    KernelEvent,
+}
+
+impl What {
+    pub fn new(v: i32) -> What {
+        match v {
+            0 => What::Generic,
+            1 => What::ProcMonitor,
+            2 => What::Firewall,
+            3 => What::Connection,
+            4 => What::Rule,
+            5 => What::Netlink,
+            6 => What::KernelEvent,
+            _ => What::Generic,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Alert {
+    pub timestamp: time::SystemTime,
+    pub priority: Priority,
+    pub r#type: Type,
+    pub what: What,
+    pub msg: String,
+}
+
+impl Alert {
+    pub fn new(ts: time::SystemTime, proto: &opensnitch_proto::pb::Alert) -> Alert {
+        let msg = match &proto.data {
+            Some(data) => match data {
+                opensnitch_proto::pb::alert::Data::Text(v) => v.clone(),
+                _ => String::from("unsupported alert data"),
+            },
+            None => String::from("no data"),
+        };
+
+        Alert {
+            timestamp: ts,
+            priority: Priority::new(proto.priority),
+            r#type: Type::new(proto.r#type),
+            what: What::new(proto.what),
+            msg: msg,
+        }
+    }
+}

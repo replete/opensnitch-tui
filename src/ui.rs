@@ -1,7 +1,6 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
-    style::palette::tailwind::SLATE,
     style::{Color, Style, Stylize},
     widgets::{Block, BorderType, List, ListItem, Paragraph, Widget},
 };
@@ -108,19 +107,30 @@ impl Widget for &App {
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded);
 
-        // abtodo: prettify proto enums to text
-        // abtodo: make this scrollable
-        let items: Vec<ListItem> = self
+        // Get a clock reference timestamp to compute alert ages.
+        let now = std::time::SystemTime::now();
+
+        // We want to render the alert list from some stateful head index,
+        // so get an iterator and skip forward to that head.
+        let items_iter = self
             .current_alerts
             .iter()
+            .skip(self.alert_list_render_offset);
+
+        let items: Vec<ListItem> = items_iter
             .enumerate()
-            .map(|(i, alert)| {
-                let color = alternate_colors(i);
+            .map(|(_, alert)| {
+                let age_s: u64;
+                let maybe_age = now.duration_since(alert.timestamp);
+                match maybe_age {
+                    Ok(age) => age_s = age.as_secs(),
+                    Err(_) => age_s = 0, // Just default to 0s in case time goes backwards
+                }
                 let alert_text = format!(
-                    "type: {} action: {} priority: {} what: {}\n",
-                    alert.r#type, alert.action, alert.priority, alert.what,
+                    "{}s ago : {:?} : {:?} : {:?} : {}\n",
+                    age_s, alert.r#type, alert.priority, alert.what, alert.msg,
                 );
-                ListItem::from(alert_text).bg(color)
+                ListItem::from(alert_text)
             })
             .collect();
 
@@ -129,15 +139,13 @@ impl Widget for &App {
             .block(alerts_block)
             .fg(Color::Cyan)
             .bg(Color::Black);
-
         list.render(areas[2], buf);
 
         // Controls footer
         let controls_text = format!(
             "\
-        `ctrl+c` -> quit | `a` -> allow connection {} | `d` -> deny connection {}\n\
-        `j` -> allow connection forever | `l` -> deny connection forever",
-            self.temp_rule_duration.get_str(),
+        `ctrl+c` → quit | `a/d` → (allow/deny) connection {}\n\
+        `j/l` → (allow/deny) connection forever | `up/down` → scroll alerts",
             self.temp_rule_duration.get_str(),
         );
 
@@ -147,16 +155,5 @@ impl Widget for &App {
             .alignment(Alignment::Center);
 
         controls_paragraph.render(areas[3], buf);
-    }
-}
-
-const NORMAL_ROW_BG: Color = SLATE.c950;
-const ALT_ROW_BG_COLOR: Color = SLATE.c900;
-
-const fn alternate_colors(i: usize) -> Color {
-    if i % 2 == 0 {
-        NORMAL_ROW_BG
-    } else {
-        ALT_ROW_BG_COLOR
     }
 }

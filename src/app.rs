@@ -1,15 +1,16 @@
+use crate::alert;
 use crate::event::{AppEvent, ConnectionEvent, Event, EventHandler};
-use crate::opensnitch_proto::pb::{Alert, Notification, Operator, Rule, Statistics};
+use crate::opensnitch_proto::pb;
 use crate::server::OpenSnitchUIServer;
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
-    widgets::ListState,
 };
 
 use crate::constants::{self, default_action, duration};
 use crate::operator_util;
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -27,19 +28,19 @@ pub struct App {
     /// Rx Pings.
     pub rx_pings: u64,
     /// Latest stats to present to UI.
-    pub current_stats: Statistics,
+    pub current_stats: pb::Statistics,
     /// Vector of alerts
-    pub current_alerts: Vec<Alert>,
-    /// Alert list rendering state
-    pub alert_list_state: ListState,
+    pub current_alerts: VecDeque<alert::Alert>,
+    /// Alert list head in UI.
+    pub alert_list_render_offset: usize,
     /// Channel sender to generate notifications for a daemon towards.
     /// The sender handle gets replaced to the latest client connection.
     /// Race protection enabled by the mutex.
-    pub notification_sender: Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
+    pub notification_sender: Arc<Mutex<mpsc::Sender<Result<pb::Notification, Status>>>>,
     /// Info on the current connection awaiting a rule determination.
     pub current_connection: Option<ConnectionEvent>,
     /// Rule sender.
-    pub rule_sender: mpsc::Sender<Rule>,
+    pub rule_sender: mpsc::Sender<pb::Rule>,
     /// gRPC server IP and port to bind to.
     bind_address: SocketAddr,
     /// Default action to be sent to connected daemons.
@@ -93,9 +94,9 @@ impl App {
             rx_pings: 0,
             events: events_handler,
             server: server,
-            current_stats: Statistics::default(),
-            current_alerts: Vec::new(),
-            alert_list_state: ListState::default(),
+            current_stats: pb::Statistics::default(),
+            current_alerts: VecDeque::new(),
+            alert_list_render_offset: 0,
             notification_sender: Arc::new(Mutex::new(dummy_notification_sender)),
             current_connection: None,
             rule_sender: dummy_rule_sender,
@@ -131,8 +132,7 @@ impl App {
                 },
                 Event::App(app_event) => match app_event {
                     AppEvent::Update(stats) => self.update_stats(stats),
-                    AppEvent::Alert(alert) => self.current_alerts.push(alert),
-                    AppEvent::NotificationReplyTypeError(_) => {} // abtodo
+                    AppEvent::Alert(alert) => self.current_alerts.push_back(alert),
                     AppEvent::AskRule(evt) => self.update_connection(evt),
                     AppEvent::TestNotify => self.test_notify().await,
                     AppEvent::Quit => self.quit(),
@@ -161,6 +161,17 @@ impl App {
             KeyCode::Char('l' | 'L') => {
                 self.make_and_send_rule(false /* is_allow */, duration::Duration::Always);
             }
+            KeyCode::Up => {
+                self.alert_list_render_offset = self.alert_list_render_offset.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if !self.current_alerts.is_empty() {
+                    self.alert_list_render_offset = std::cmp::min(
+                        self.alert_list_render_offset.saturating_add(1),
+                        self.current_alerts.len() - 1,
+                    );
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -176,6 +187,28 @@ impl App {
             // in the absence of a Rule created by us.
             self.clear_connection();
         }
+
+        // Routinely expire alerts.
+        match self.current_alerts.front() {
+            None => {}
+            Some(alert) => {
+                let maybe_age = now.duration_since(alert.timestamp);
+                match maybe_age {
+                    Ok(age) => {
+                        // Max alert duration is 60s, could be adjustable if needed
+                        if age.as_secs() >= 60 {
+                            // Pop this off but also correct the render offset in case it's set to back of list.
+                            if self.alert_list_render_offset == (self.current_alerts.len() - 1) {
+                                self.alert_list_render_offset =
+                                    self.alert_list_render_offset.saturating_sub(1);
+                            }
+                            self.current_alerts.pop_front();
+                        }
+                    }
+                    Err(_) => {} // Do nothing in case time goes backwards
+                }
+            }
+        }
     }
 
     /// Set running to false to quit the application.
@@ -184,21 +217,21 @@ impl App {
     }
 
     /// Update peer stats from incoming Ping payload.
-    pub fn update_stats(&mut self, stats: Statistics) {
+    pub fn update_stats(&mut self, stats: pb::Statistics) {
         self.rx_pings = self.rx_pings.saturating_add(1);
         self.current_stats = stats;
     }
 
-    /// abtodo: Server to daemon notifications under development.
+    /// Server to daemon notifications under development.
     pub async fn test_notify(&mut self) {
         let sender = self.notification_sender.lock().await;
         let _ = sender
-            .send(Ok(Notification {
+            .send(Ok(pb::Notification {
                 id: 123,
-                client_name: String::new(),
-                server_name: String::new(),
-                r#type: 14, // abtodo: Task stop with invalid data, so expect just an error log from daemon?
-                data: String::from("HELLO AMAL CATCH ME ON THE TCPDUMP"),
+                client_name: String::default(),
+                server_name: String::default(),
+                r#type: 14, // This is a task stop notification.
+                data: String::from("Test notification triggers an error"),
                 rules: Vec::default(),
                 sys_firewall: None,
             }))
@@ -220,7 +253,7 @@ impl App {
     /// abtodo maybe process hash too
     /// Returns `none` if there is no current connection.
     /// * is_allow: Whether the rule for this connection should allow or deny the flow.
-    fn make_rule(&self, is_allow: bool, duration: duration::Duration) -> Option<Rule> {
+    fn make_rule(&self, is_allow: bool, duration: duration::Duration) -> Option<pb::Rule> {
         if self.current_connection.is_none() {
             return None;
         }
@@ -256,7 +289,7 @@ impl App {
             );
         }
 
-        Some(Rule {
+        Some(pb::Rule {
             created: 0,
             name: format!(
                 "{}-{}-simple-via-tui-{}",
@@ -268,7 +301,7 @@ impl App {
             nolog: false,
             action: action,
             duration: duration,
-            operator: Some(Operator {
+            operator: Some(pb::Operator {
                 r#type: String::from(constants::rule_type::RULE_TYPE_LIST),
                 operand: String::from(constants::operand::OPERAND_LIST),
                 data: maybe_operator_json.unwrap(),
@@ -278,7 +311,7 @@ impl App {
         })
     }
 
-    fn send_rule(&self, rule: Rule) {
+    fn send_rule(&self, rule: pb::Rule) {
         let send_res = self.rule_sender.try_send(rule);
         match send_res {
             Err(err) => {

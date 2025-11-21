@@ -5,13 +5,11 @@ use tokio::time::timeout;
 use tonic::Streaming;
 use tonic::{Request, Response, Status, transport::Server};
 
+use crate::alert;
 use crate::event::{AppEvent, ConnectionEvent, Event};
+use crate::opensnitch_proto::pb;
 use crate::opensnitch_proto::pb::ui_server::Ui;
 use crate::opensnitch_proto::pb::ui_server::UiServer;
-use crate::opensnitch_proto::pb::{
-    Alert, ClientConfig, Connection, MsgResponse, Notification, NotificationReply,
-    NotificationReplyCode, PingReply, PingRequest, Rule, Statistics,
-};
 use crate::{constants, opensnitch_json};
 
 use std::sync::Arc;
@@ -21,38 +19,53 @@ use tokio_stream::wrappers::ReceiverStream;
 #[derive(Debug)]
 pub struct OpenSnitchUIGrpcServer {
     pub event_sender: mpsc::UnboundedSender<Event>,
-    pub app_to_server_notification_sender: Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
-    pub app_to_server_rule_receiver: Mutex<mpsc::Receiver<Rule>>,
+    pub app_to_server_notification_sender:
+        Arc<Mutex<mpsc::Sender<Result<pb::Notification, Status>>>>,
+    pub app_to_server_rule_receiver: Mutex<mpsc::Receiver<pb::Rule>>,
     default_action: String,
 }
 
 #[tonic::async_trait]
 impl Ui for OpenSnitchUIGrpcServer {
-    type NotificationsStream = ReceiverStream<Result<Notification, Status>>;
+    type NotificationsStream = ReceiverStream<Result<pb::Notification, Status>>;
 
-    async fn ping(&self, request: Request<PingRequest>) -> Result<Response<PingReply>, Status> {
-        let stats: Statistics = request.get_ref().stats.as_ref().unwrap().clone();
+    async fn ping(
+        &self,
+        request: Request<pb::PingRequest>,
+    ) -> Result<Response<pb::PingReply>, Status> {
+        let stats: pb::Statistics = request.get_ref().stats.as_ref().unwrap().clone();
         let _ = self.event_sender.send(Event::App(AppEvent::Update(stats)));
 
-        let reply = PingReply {
+        let reply = pb::PingReply {
             id: request.get_ref().id,
         };
 
         Ok(Response::new(reply))
     }
 
-    async fn post_alert(&self, request: Request<Alert>) -> Result<Response<MsgResponse>, Status> {
-        let alert = request.get_ref().clone();
-        let _ = self.event_sender.send(Event::App(AppEvent::Alert(alert)));
+    async fn post_alert(
+        &self,
+        request: Request<pb::Alert>,
+    ) -> Result<Response<pb::MsgResponse>, Status> {
+        let alert = request.get_ref();
+        let _ = self
+            .event_sender
+            .send(Event::App(AppEvent::Alert(alert::Alert::new(
+                std::time::SystemTime::now(),
+                alert,
+            ))));
 
-        let reply = MsgResponse {
+        let reply = pb::MsgResponse {
             id: request.get_ref().id,
         };
 
         Ok(Response::new(reply))
     }
 
-    async fn ask_rule(&self, request: Request<Connection>) -> Result<Response<Rule>, Status> {
+    async fn ask_rule(
+        &self,
+        request: Request<pb::Connection>,
+    ) -> Result<Response<pb::Rule>, Status> {
         // In theory, the current proto spec and OpenSnitch daemon design doesn't seem
         // to permit opening concurrent `AskRule` requests.
         // If this was to be supported in the future, we'd want to mix in some UID
@@ -78,8 +91,8 @@ impl Ui for OpenSnitchUIGrpcServer {
 
     async fn subscribe(
         &self,
-        request: Request<ClientConfig>,
-    ) -> Result<Response<ClientConfig>, Status> {
+        request: Request<pb::ClientConfig>,
+    ) -> Result<Response<pb::ClientConfig>, Status> {
         // Relfect back most of the rx'ed config.
         // Be a little oversmart here and rewrite the config JSON blob with the only k-v
         // the daemon really cares about - default action.
@@ -99,7 +112,7 @@ impl Ui for OpenSnitchUIGrpcServer {
 
     async fn notifications(
         &self,
-        request: Request<Streaming<NotificationReply>>,
+        request: Request<Streaming<pb::NotificationReply>>,
     ) -> Result<Response<Self::NotificationsStream>, Status> {
         let mut in_stream = request.into_inner();
         let (app_to_server_notification_tx, app_to_server_notification_rx) = mpsc::channel(128);
@@ -112,40 +125,47 @@ impl Ui for OpenSnitchUIGrpcServer {
                     Ok(nominal_grpc_event) => {
                         match nominal_grpc_event {
                             Some(notification) => {
-                                if notification.code() == NotificationReplyCode::Error {
-                                    let _ = tx.send(Event::App(
-                                        AppEvent::NotificationReplyTypeError(notification.data),
-                                    ));
-                                } else {
-                                    // println!("notif OK reply");
+                                match notification.code() {
+                                    pb::NotificationReplyCode::Error => {
+                                        // Redirect error notifications to the alerts channel
+                                        let _ =
+                                            tx.send(Event::App(AppEvent::Alert(alert::Alert {
+                                                timestamp: std::time::SystemTime::now(),
+                                                priority: alert::Priority::Medium,
+                                                r#type: alert::Type::Error,
+                                                what: alert::What::Generic,
+                                                msg: notification.data,
+                                            })));
+                                    }
+                                    pb::NotificationReplyCode::Ok => {}
                                 }
                             }
                             None => {
                                 // Stream closed by peer
+                                let _ = tx.send(Event::App(AppEvent::Alert(alert::Alert {
+                                    timestamp: std::time::SystemTime::now(),
+                                    priority: alert::Priority::High,
+                                    r#type: alert::Type::Warning,
+                                    what: alert::What::Generic,
+                                    msg: String::from("gRPC stream closed by daemon"),
+                                })));
                                 break;
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(err) => {
                         // gRPC error from peer on stream
+                        let _ = tx.send(Event::App(AppEvent::Alert(alert::Alert {
+                            timestamp: std::time::SystemTime::now(),
+                            priority: alert::Priority::High,
+                            r#type: alert::Type::Warning,
+                            what: alert::What::Generic,
+                            msg: format!("gRPC error from daemon: {}", err),
+                        })));
                         break;
-                        // if let Some(io_err) = match_for_io_error(&err) {
-                        //     if io_err.kind() == ErrorKind::BrokenPipe {
-                        //         // here you can handle special case when client
-                        //         // disconnected in unexpected way
-                        //         eprintln!("\tclient disconnected: broken pipe");
-                        //         break;
-                        //     }
-                        // }
-
-                        // match tx.send(Err(err)).await {
-                        //     Ok(_) => (),
-                        //     Err(_err) => break, // response was dropped
-                        // }
                     }
                 }
             }
-            // println!("\tstream ended");
         });
 
         // Grab a lock on the app to server notification sender, and swaparoo the new sender in.
@@ -170,8 +190,10 @@ impl OpenSnitchUIServer {
         &self,
         address: SocketAddr,
         event_sender: mpsc::UnboundedSender<Event>,
-        app_to_server_notification_sender: &Arc<Mutex<mpsc::Sender<Result<Notification, Status>>>>,
-        app_to_server_rule_receiver: mpsc::Receiver<Rule>,
+        app_to_server_notification_sender: &Arc<
+            Mutex<mpsc::Sender<Result<pb::Notification, Status>>>,
+        >,
+        app_to_server_rule_receiver: mpsc::Receiver<pb::Rule>,
         default_action: constants::default_action::DefaultAction,
     ) {
         let address = address.clone();

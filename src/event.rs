@@ -1,4 +1,5 @@
-use crate::opensnitch_proto::pb::{Alert, Connection, Statistics};
+use crate::alert::Alert;
+use crate::opensnitch_proto::pb::{Connection, Statistics};
 use color_eyre::eyre::OptionExt;
 use futures::{FutureExt, StreamExt};
 use ratatui::crossterm::event::Event as CrosstermEvent;
@@ -28,19 +29,15 @@ pub enum Event {
 }
 
 /// Application events.
-///
-/// You can extend this enum with your own custom events.
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     /// Update stats after receiving a gRPC Ping request.
     Update(Statistics),
     /// Alert from opensnitch daemon.
     Alert(Alert),
-    /// Notification reply from opensnitch daemon containing an error.
-    NotificationReplyTypeError(String),
     /// Daemon trapped a new connection that requires action.
     AskRule(ConnectionEvent),
-    /// abtodo: Test-only trigger a notification that does nothing.
+    /// Test-only: trigger a notification that does nothing.
     TestNotify,
     /// Quit the application.
     Quit,
