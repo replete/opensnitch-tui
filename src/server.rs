@@ -211,9 +211,9 @@ impl OpenSnitchUIServer {
         default_action: constants::default_action::DefaultAction,
         connection_disposition_timeout: Duration,
     ) {
-        let address = address.clone();
+        let address = address;
         let server_to_app_event_sender_handle = server_to_app_event_sender.clone();
-        let notification_sender = Arc::clone(&app_to_server_notification_sender);
+        let notification_sender = Arc::clone(app_to_server_notification_sender);
         let rule_receiver = Mutex::new(app_to_server_rule_receiver);
         let default_action_str = String::from(default_action.get_str());
         tokio::spawn(async move {
@@ -222,7 +222,7 @@ impl OpenSnitchUIServer {
                 app_to_server_notification_sender: notification_sender,
                 app_to_server_rule_receiver: rule_receiver,
                 default_action: default_action_str,
-                connection_disposition_timeout: connection_disposition_timeout,
+                connection_disposition_timeout,
                 askrule_lock: Mutex::default(),
             };
             let _ = Server::builder()

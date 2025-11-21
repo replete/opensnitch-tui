@@ -118,8 +118,7 @@ impl Widget for &App {
             .skip(self.alert_list_render_offset);
 
         let items: Vec<ListItem> = items_iter
-            .enumerate()
-            .map(|(_, alert)| {
+            .map(|alert| {
                 let age_s: u64;
                 let maybe_age = now.duration_since(alert.timestamp);
                 match maybe_age {

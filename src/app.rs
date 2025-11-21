@@ -72,12 +72,12 @@ impl App {
             ));
         }
 
-        let maybe_default_action = default_action::DefaultAction::new(&default_action_in);
+        let maybe_default_action = default_action::DefaultAction::new(default_action_in);
         if maybe_default_action.is_err() {
             return Err(format!("Invalid default action: {}", default_action_in));
         }
 
-        let maybe_temp_rule_lifetime = duration::Duration::new(&temp_rule_lifetime);
+        let maybe_temp_rule_lifetime = duration::Duration::new(temp_rule_lifetime);
         if maybe_temp_rule_lifetime.is_err() {
             return Err(format!(
                 "Invalid temporary rule lifetime: {}",
@@ -108,7 +108,7 @@ impl App {
             running: true,
             rx_pings: 0,
             events: events_handler,
-            server: server,
+            server,
             current_stats: pb::Statistics::default(),
             current_alerts: VecDeque::new(),
             alert_list_render_offset: 0,
@@ -118,7 +118,7 @@ impl App {
             bind_address: maybe_bind_addr.unwrap(),
             default_action: maybe_default_action.unwrap(),
             temp_rule_lifetime: maybe_temp_rule_lifetime.unwrap(),
-            connection_disposition_timeout: connection_disposition_timeout,
+            connection_disposition_timeout,
         })
     }
 
@@ -271,9 +271,8 @@ impl App {
     /// Returns `none` if there is no current connection.
     /// * is_allow: Whether the rule for this connection should allow or deny the flow.
     fn make_rule(&self, is_allow: bool, duration: duration::Duration) -> Option<pb::Rule> {
-        if self.current_connection.is_none() {
-            return None;
-        }
+        // Noop if there's no connection trapped.
+        self.current_connection.as_ref()?;
 
         let conn = &self.current_connection.as_ref().unwrap().connection;
 
@@ -316,8 +315,8 @@ impl App {
             enabled: true,
             precedence: false,
             nolog: false,
-            action: action,
-            duration: duration,
+            action,
+            duration,
             operator: Some(pb::Operator {
                 r#type: String::from(constants::rule_type::RULE_TYPE_LIST),
                 operand: String::from(constants::operand::OPERAND_LIST),
@@ -330,12 +329,9 @@ impl App {
 
     fn send_rule(&self, rule: pb::Rule) {
         let send_res = self.rule_sender.try_send(rule);
-        match send_res {
-            Err(err) => {
-                // Shouldn't really happen so bail here.
-                panic!("Unable to send rule: {}", err);
-            }
-            _ => {}
+        if let Err(err) = send_res {
+            // Shouldn't really happen so bail here.
+            panic!("Unable to send rule: {}", err);
         }
     }
 

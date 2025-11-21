@@ -86,7 +86,7 @@ impl Alert {
             priority: Priority::new(proto.priority),
             r#type: Type::new(proto.r#type),
             what: What::new(proto.what),
-            msg: msg,
+            msg,
         }
     }
 }
