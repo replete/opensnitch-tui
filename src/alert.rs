@@ -10,7 +10,7 @@ pub enum Priority {
 }
 
 impl Priority {
-    pub fn new(v: i32) -> Priority {
+    #[must_use] pub fn new(v: i32) -> Priority {
         match v {
             0 => Priority::Low,
             1 => Priority::Medium,
@@ -27,7 +27,7 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn new(v: i32) -> Type {
+    #[must_use] pub fn new(v: i32) -> Type {
         match v {
             0 => Type::Error,
             1 => Type::Warning,
@@ -48,7 +48,7 @@ pub enum What {
 }
 
 impl What {
-    pub fn new(v: i32) -> What {
+    #[must_use] pub fn new(v: i32) -> What {
         match v {
             0 => What::Generic,
             1 => What::ProcMonitor,
@@ -72,7 +72,7 @@ pub struct Alert {
 }
 
 impl Alert {
-    pub fn new(ts: time::SystemTime, proto: &opensnitch_proto::pb::Alert) -> Alert {
+    #[must_use] pub fn new(ts: time::SystemTime, proto: &opensnitch_proto::pb::Alert) -> Alert {
         let msg = match &proto.data {
             Some(data) => match data {
                 opensnitch_proto::pb::alert::Data::Text(v) => v.clone(),

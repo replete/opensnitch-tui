@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 pub mod alert;
 pub mod app;
 pub mod cli;

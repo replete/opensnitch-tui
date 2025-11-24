@@ -30,8 +30,8 @@ pub enum Operand {
 }
 
 impl Operand {
-    /// Enum as string for OpenSnitch daemon.
-    pub fn get_str(&self) -> &str {
+    /// Enum as string for `OpenSnitch` daemon.
+    #[must_use] pub fn get_str(&self) -> &str {
         match self {
             Operand::ProcessId => "process.id",
             Operand::ProcessPath => "process.path",
@@ -70,8 +70,8 @@ pub enum RuleType {
 }
 
 impl RuleType {
-    /// Enum as string for OpenSnitch daemon.
-    pub fn get_str(&self) -> &str {
+    /// Enum as string for `OpenSnitch` daemon.
+    #[must_use] pub fn get_str(&self) -> &str {
         match self {
             RuleType::List => "list",
             RuleType::Lists => "lists",
@@ -84,7 +84,7 @@ impl RuleType {
 
 /// Firewall rule actions.
 /// Note: A daemon's "default actions" set is a narrower subset
-/// of this list, see DefaultAction.
+/// of this list, see `DefaultAction`.
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
     Allow,
@@ -129,8 +129,8 @@ impl Action {
         }
     }
 
-    /// Enum as string for OpenSnitch daemon.
-    pub fn get_str(&self) -> &str {
+    /// Enum as string for `OpenSnitch` daemon.
+    #[must_use] pub fn get_str(&self) -> &str {
         match self {
             Action::Allow => "allow",
             Action::Deny => "deny",
@@ -186,8 +186,8 @@ impl Duration {
         }
     }
 
-    /// Enum as string for OpenSnitch daemon.
-    pub fn get_str(&self) -> &str {
+    /// Enum as string for `OpenSnitch` daemon.
+    #[must_use] pub fn get_str(&self) -> &str {
         match self {
             Duration::UntilRestart => "until restart",
             Duration::Always => "always",
@@ -223,8 +223,8 @@ impl DefaultAction {
         }
     }
 
-    /// Enum as string for OpenSnitch daemon.
-    pub fn get_str(&self) -> &str {
+    /// Enum as string for `OpenSnitch` daemon.
+    #[must_use] pub fn get_str(&self) -> &str {
         match self {
             DefaultAction::Allow => "allow",
             DefaultAction::Deny => "deny",

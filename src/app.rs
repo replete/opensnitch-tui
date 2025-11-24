@@ -74,14 +74,13 @@ impl App {
 
         let maybe_default_action = constants::DefaultAction::new(default_action_in);
         if maybe_default_action.is_err() {
-            return Err(format!("Invalid default action: {}", default_action_in));
+            return Err(format!("Invalid default action: {default_action_in}"));
         }
 
         let maybe_temp_rule_lifetime = constants::Duration::new(temp_rule_lifetime);
         if maybe_temp_rule_lifetime.is_err() {
             return Err(format!(
-                "Invalid temporary rule lifetime: {}",
-                temp_rule_lifetime
+                "Invalid temporary rule lifetime: {temp_rule_lifetime}"
             ));
         }
 
@@ -89,8 +88,7 @@ impl App {
         // Subtract a few seconds just to be nice.
         if *connection_disposition_timeout_in > 115 {
             return Err(format!(
-                "Connection disposition timeout {} cannot be over 115",
-                connection_disposition_timeout_in
+                "Connection disposition timeout {connection_disposition_timeout_in} cannot be over 115"
             ));
         }
         let connection_disposition_timeout =
@@ -143,7 +141,7 @@ impl App {
                     crossterm::event::Event::Key(key_event)
                         if key_event.kind == crossterm::event::KeyEventKind::Press =>
                     {
-                        self.handle_key_events(key_event)?
+                        self.handle_key_events(key_event)?;
                     }
                     _ => {}
                 },
@@ -163,7 +161,7 @@ impl App {
     pub fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.events.send(AppEvent::Quit)
+                self.events.send(AppEvent::Quit);
             }
             KeyCode::Char('t' | 'T') => self.events.send(AppEvent::TestNotify),
             KeyCode::Char('a' | 'A') => {
@@ -265,7 +263,7 @@ impl App {
     /// Matches on user ID && process path && IP dst && l4 port && l4 protocol.
     /// TODO: Consider including process hash for extra strictness.
     /// Returns `none` if there is no current connection.
-    /// * is_allow: Whether the rule for this connection should allow or deny the flow.
+    /// * `is_allow`: Whether the rule for this connection should allow or deny the flow.
     fn make_rule(
         &self,
         action: constants::Action,
@@ -291,21 +289,18 @@ impl App {
 
         let action_str = action.get_str();
         let duration = String::from(duration.get_str());
-        let pretty_proc_path = conn.process_path.clone().replace("/", "-");
+        let pretty_proc_path = conn.process_path.clone().replace('/', "-");
         let maybe_operator_json = serde_json::to_string(&operators);
-        if maybe_operator_json.is_err() {
-            panic!(
-                // Shouldn't really happen due to serde_impl.rs, ideally something caught at build time.
+        // Shouldn't really happen due to serde_impl.rs, ideally something caught at build time.
+        assert!(maybe_operator_json.is_ok(), 
                 "Operator list JSON serialization failed: {}",
                 maybe_operator_json.unwrap_err()
             );
-        }
 
         Some(pb::Rule {
             created: 0,
             name: format!(
-                "{}-{}-simple-via-tui-{}",
-                action_str, duration, pretty_proc_path
+                "{action_str}-{duration}-simple-via-tui-{pretty_proc_path}"
             ),
             description: String::default(),
             enabled: true,
@@ -327,7 +322,7 @@ impl App {
         let send_res = self.rule_sender.try_send(rule);
         if let Err(err) = send_res {
             // Shouldn't really happen so bail here.
-            panic!("Unable to send rule: {}", err);
+            panic!("Unable to send rule: {err}");
         }
     }
 

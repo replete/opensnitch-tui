@@ -28,7 +28,7 @@ pub struct OpenSnitchUIGrpcServer {
     default_action: String,
     /// Duration to wait for app to provide a rule for client that's trapped a connection.
     connection_disposition_timeout: Duration,
-    /// Mutex to ensure only one AskRule request is active at a time.
+    /// Mutex to ensure only one `AskRule` request is active at a time.
     askrule_lock: Mutex<()>,
 }
 
@@ -101,7 +101,7 @@ impl Ui for OpenSnitchUIGrpcServer {
                 Some(rule) => Ok(Response::new(rule)),
                 None => Err(Status::internal("sender somehow closed")),
             },
-            Err(err) => Err(Status::internal(format!("No rule created: {}", err))),
+            Err(err) => Err(Status::internal(format!("No rule created: {err}"))),
         }
     }
 
@@ -134,7 +134,7 @@ impl Ui for OpenSnitchUIGrpcServer {
         let (app_to_server_notification_tx, app_to_server_notification_rx) = mpsc::channel(128);
         let tx = self.server_to_app_event_sender.clone();
 
-        // Grab a lock on the app to server notification sender, and swaparoo the new sender in.
+        // Grab a lock on the app to server notification sender, then swaparoo the new sender in.
         // A pre-existing receiver on the old sender should also eventually close since its sender will have closed.
         let mut sender_chan = self.app_to_server_notification_sender.lock().await;
         *sender_chan = app_to_server_notification_tx;

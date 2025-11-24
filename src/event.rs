@@ -61,7 +61,7 @@ impl Default for EventHandler {
 
 impl EventHandler {
     /// Constructs a new instance of [`EventHandler`] and spawns a new thread to handle events.
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let actor = EventTask::new(sender.clone());
         tokio::spawn(async { actor.run().await });
@@ -118,7 +118,7 @@ impl EventTask {
             let tick_delay = tick.tick();
             let crossterm_event = reader.next().fuse();
             tokio::select! {
-              _ = self.sender.closed() => {
+              () = self.sender.closed() => {
                 break;
               }
               _ = tick_delay => {
