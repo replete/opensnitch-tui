@@ -140,25 +140,38 @@ impl App {
             self.default_action,
             self.connection_disposition_timeout,
         );
+        // Only need a draw if:
+        // * This is the first cycle (see default value below)
+        // * Tick resulted in a meaningful state update
+        // * Crossterm event - some key was pressed
+        // * We received an event from the gRPC server
+        let mut draw_needed = true;
         while self.running {
-            terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             match self.events.next().await? {
-                Event::Tick => self.tick(),
+                Event::Tick => draw_needed |= self.tick(), /* Doing an OR here lets first tick through */
                 Event::Crossterm(event) => match event {
                     crossterm::event::Event::Key(key_event)
                         if key_event.kind == crossterm::event::KeyEventKind::Press =>
                     {
+                        draw_needed = true;
                         self.handle_key_events(key_event)?;
                     }
                     _ => {}
                 },
-                Event::App(app_event) => match *app_event {
-                    AppEvent::Update(stats) => self.update_stats(stats),
-                    AppEvent::Alert(alert) => self.current_alerts.push_back(alert.clone()),
-                    AppEvent::AskRule(evt) => self.update_connection(evt),
-                    AppEvent::TestNotify => self.test_notify().await,
-                    AppEvent::Quit => self.quit(),
-                },
+                Event::App(app_event) => {
+                    draw_needed = true;
+                    match *app_event {
+                        AppEvent::Update(stats) => self.update_stats(stats),
+                        AppEvent::Alert(alert) => self.current_alerts.push_back(alert.clone()),
+                        AppEvent::AskRule(evt) => self.update_connection(evt),
+                        AppEvent::TestNotify => self.test_notify().await,
+                        AppEvent::Quit => self.quit(),
+                    }
+                }
+            }
+            if draw_needed {
+                terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
+                draw_needed = false;
             }
         }
         Ok(())
@@ -202,7 +215,9 @@ impl App {
     }
 
     /// Handles the tick event of the terminal.
-    pub fn tick(&mut self) {
+    /// Returns whether meaningful change occured, which should trigger a re-render of terminal.
+    pub fn tick(&mut self) -> bool {
+        let mut did_work = false;
         let now = std::time::SystemTime::now();
         if let Some(conn) = &self.current_connection
             && now >= conn.expiry_ts
@@ -210,6 +225,7 @@ impl App {
             // The daemon's gRPC call should time out and take some default action
             // in the absence of a Rule created by us.
             self.clear_connection();
+            did_work = true;
         }
 
         // Routinely expire alerts.
@@ -225,10 +241,13 @@ impl App {
                                 self.alert_list_render_offset.saturating_sub(1);
                         }
                         self.current_alerts.pop_front();
+                        did_work = true;
                     }
                 }
             }
         }
+
+        did_work
     }
 
     /// Set running to false to quit the application.
