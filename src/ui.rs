@@ -7,6 +7,10 @@ use ratatui::{
 
 use crate::app::App;
 
+fn truncate_str(s: &str, max: usize) -> &str {
+    if s.len() <= max { s } else { &s[..max] }
+}
+
 impl Widget for &App {
     /// Renders the user interface widgets.
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -34,26 +38,52 @@ impl Widget for &App {
 
         stats_paragraph.render(areas[0], buf);
 
-        // Connection controls
+        // Connection queue
+        let queue_len = self.connection_queue.len();
         let connection_block = Block::bordered()
-            .title(" New Connections ")
+            .title(format!(" New Connections ({queue_len}) "))
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded)
-            .title_style(match &self.current_connection {
-                None => Style::default(),
-                Some(_) => Style::default().bold(),
+            .title_style(if queue_len > 0 {
+                Style::default().bold()
+            } else {
+                Style::default()
             })
-            .style(match &self.current_connection {
-                None => Style::default().fg(Color::Cyan),
-                Some(_) => Style::default().fg(Color::Yellow),
+            .style(if queue_len > 0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Cyan)
             });
 
-        let connection_text = self.format_connection_panel();
-        let connection_paragraph = Paragraph::new(connection_text)
-            .block(connection_block)
-            .bg(Color::Black);
+        let now = std::time::SystemTime::now();
+        let items: Vec<ListItem> = self
+            .connection_queue
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let conn = &q.event.connection;
+                let ttl = q.event.expiry_ts.duration_since(now).map_or(0, |d| d.as_secs());
+                let proc = conn.process_path.rsplit('/').next().unwrap_or(&conn.process_path);
+                let dst = if conn.dst_host.is_empty() { &conn.dst_ip } else { &conn.dst_host };
+                let line = format!(
+                    " {:<12} → {:>25}:{:<5} {:>4} {:>3}s",
+                    truncate_str(proc, 12),
+                    truncate_str(dst, 25),
+                    conn.dst_port,
+                    conn.protocol,
+                    ttl
+                );
+                let style = if i == self.selected_connection {
+                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(line).style(style)
+            })
+            .collect();
 
-        connection_paragraph.render(areas[1], buf);
+        let list = List::new(items).block(connection_block).bg(Color::Black);
+        list.render(areas[1], buf);
 
         // Alerts list
         let alerts_block = Block::bordered()
@@ -96,8 +126,8 @@ impl Widget for &App {
         // Controls footer
         let controls_text = format!(
             "\
-        `ctrl+C` → quit | `A/D` → (allow/deny) connection {}\n\
-        `J/L` → (allow/deny) connection forever | `up/down` → scroll alerts",
+        `ctrl+C` → quit | `↑/↓` → select connection | `A/D` → allow/deny {}\n\
+        `J/L` → allow/deny forever",
             self.temp_rule_lifetime.get_str(),
         );
 
@@ -134,40 +164,6 @@ impl App {
                 )
             }
             None => String::default(), // Consider a more useful message in the future?
-        }
-    }
-
-    fn format_connection_panel(&self) -> String {
-        match &self.current_connection {
-            None => String::default(),
-            Some(info) => {
-                // Don't just leave field blank if not populated.
-                let dst_host_string = if info.connection.dst_host.is_empty() {
-                    "-"
-                } else {
-                    &info.connection.dst_host
-                };
-
-                format!(
-                    "\
-                src       {} / {}\n\
-                dst       {} / {}\n\
-                proto     {}\n\
-                dst host  {}\n\
-                uid       {}\n\
-                pid       {}\n\
-                ppath     {}",
-                    info.connection.src_ip,
-                    info.connection.src_port,
-                    info.connection.dst_ip,
-                    info.connection.dst_port,
-                    info.connection.protocol,
-                    dst_host_string,
-                    info.connection.user_id,
-                    info.connection.process_id,
-                    info.connection.process_path,
-                )
-            }
         }
     }
 }

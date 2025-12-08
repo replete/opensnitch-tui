@@ -1,16 +1,16 @@
 use crate::alert::Alert;
-use crate::opensnitch_proto::pb::{Connection, Statistics};
+use crate::opensnitch_proto::pb::{Connection, Rule, Statistics};
 use color_eyre::eyre::OptionExt;
 use futures::{FutureExt, StreamExt};
 use ratatui::crossterm::event::Event as CrosstermEvent;
 use std::time::{Duration, SystemTime};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// The frequency at which tick events are emitted.
 const TICK_FPS: f64 = 5.0;
 
 /// Representation of all possible events.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Event {
     /// Routine tick.
     Tick,
@@ -21,14 +21,14 @@ pub enum Event {
 }
 
 /// Application events.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum AppEvent {
     /// Update stats after receiving a gRPC Ping request.
     Update(PingEvent),
     /// Alert from opensnitch daemon.
     Alert(Alert),
     /// Daemon trapped a new connection that requires action.
-    AskRule(ConnectionEvent),
+    AskRule(QueuedConnection),
     /// Test-only: trigger a notification that does nothing.
     TestNotify,
     /// Quit the application.
@@ -52,6 +52,13 @@ pub struct ConnectionEvent {
     pub connection: Connection,
     /// Expiry timestamp at which point some default action is taken.
     pub expiry_ts: SystemTime,
+}
+
+/// A queued connection awaiting user action, with a channel to send the rule back.
+#[derive(Debug)]
+pub struct QueuedConnection {
+    pub event: ConnectionEvent,
+    pub rule_tx: oneshot::Sender<Rule>,
 }
 
 /// Terminal event handler.

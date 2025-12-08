@@ -1,5 +1,5 @@
 use crate::alert;
-use crate::event::{AppEvent, ConnectionEvent, Event, EventHandler, PingEvent};
+use crate::event::{AppEvent, Event, EventHandler, PingEvent, QueuedConnection};
 use crate::opensnitch_proto::pb;
 use crate::server::OpenSnitchUIServer;
 use ratatui::{
@@ -39,10 +39,10 @@ pub struct App {
     /// The sender handle gets replaced to the latest client connection.
     /// Race protection enabled by the mutex.
     pub notification_sender: Arc<Mutex<mpsc::Sender<Result<pb::Notification, Status>>>>,
-    /// Info on the current connection awaiting a rule determination.
-    pub current_connection: Option<ConnectionEvent>,
-    /// Rule sender.
-    pub rule_sender: mpsc::Sender<pb::Rule>,
+    /// Queue of connections awaiting rule determination.
+    pub connection_queue: VecDeque<QueuedConnection>,
+    /// Index of selected connection in queue.
+    pub selected_connection: usize,
     /// gRPC server IP and port to bind to.
     bind_address: SocketAddr,
     /// Default action to be sent to connected daemons.
@@ -105,7 +105,6 @@ impl App {
         // Hold a dummy sender channel until a client actually connects to server and swaps in a usable
         // sender handle.
         let (dummy_notification_sender, _) = mpsc::channel(1);
-        let (dummy_rule_sender, _) = mpsc::channel(1);
 
         Ok(Self {
             running: true,
@@ -117,8 +116,8 @@ impl App {
             current_alerts: VecDeque::new(),
             alert_list_render_offset: 0,
             notification_sender: Arc::new(Mutex::new(dummy_notification_sender)),
-            current_connection: None,
-            rule_sender: dummy_rule_sender,
+            connection_queue: VecDeque::new(),
+            selected_connection: 0,
             bind_address: maybe_bind_addr.unwrap(),
             default_action: maybe_default_action.unwrap(),
             temp_rule_lifetime: maybe_temp_rule_lifetime.unwrap(),
@@ -132,14 +131,10 @@ impl App {
     /// # Panics
     /// Largely upon runtime invariant violation, could be fixed in future versions.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
-        // Rule receiver gets borrowed by the server
-        let (rule_sender, rule_receiver) = mpsc::channel(1);
-        self.rule_sender = rule_sender;
         self.server.spawn_and_run(
             self.bind_address,
             self.events.sender.clone(),
             &self.notification_sender,
-            rule_receiver,
             self.default_action,
             self.connection_disposition_timeout,
         );
@@ -166,7 +161,7 @@ impl App {
                     match *app_event {
                         AppEvent::Update(stats) => self.update_stats(stats),
                         AppEvent::Alert(alert) => self.current_alerts.push_back(alert.clone()),
-                        AppEvent::AskRule(evt) => self.update_connection(evt),
+                        AppEvent::AskRule(queued) => self.enqueue_connection(queued),
                         AppEvent::TestNotify => self.test_notify().await,
                         AppEvent::Quit => self.quit(),
                     }
@@ -202,13 +197,13 @@ impl App {
                 self.make_and_send_rule(constants::Action::Deny, constants::Duration::Always);
             }
             KeyCode::Up => {
-                self.alert_list_render_offset = self.alert_list_render_offset.saturating_sub(1);
+                self.selected_connection = self.selected_connection.saturating_sub(1);
             }
             KeyCode::Down => {
-                if !self.current_alerts.is_empty() {
-                    self.alert_list_render_offset = std::cmp::min(
-                        self.alert_list_render_offset.saturating_add(1),
-                        self.current_alerts.len() - 1,
+                if !self.connection_queue.is_empty() {
+                    self.selected_connection = std::cmp::min(
+                        self.selected_connection.saturating_add(1),
+                        self.connection_queue.len() - 1,
                     );
                 }
             }
@@ -222,12 +217,18 @@ impl App {
     pub fn tick(&mut self) -> bool {
         let mut did_work = false;
         let now = std::time::SystemTime::now();
-        if let Some(conn) = &self.current_connection
-            && now >= conn.expiry_ts
-        {
-            // The daemon's gRPC call should time out and take some default action
-            // in the absence of a Rule created by us.
-            self.clear_connection();
+
+        // Expire connections whose timeout has passed (daemon will take default action).
+        let original_len = self.connection_queue.len();
+        self.connection_queue.retain(|q| now < q.event.expiry_ts);
+        if self.connection_queue.len() != original_len {
+            // Fix selection if it's now out of bounds
+            if !self.connection_queue.is_empty() {
+                self.selected_connection =
+                    self.selected_connection.min(self.connection_queue.len() - 1);
+            } else {
+                self.selected_connection = 0;
+            }
             did_work = true;
         }
 
@@ -285,30 +286,22 @@ impl App {
             .await;
     }
 
-    /// Update connection holder with latest inbound event.
-    pub fn update_connection(&mut self, evt: ConnectionEvent) {
-        self.current_connection = Some(evt);
+    /// Add connection to queue.
+    pub fn enqueue_connection(&mut self, queued: QueuedConnection) {
+        self.connection_queue.push_back(queued);
     }
 
-    /// Clear connection holder.
-    pub fn clear_connection(&mut self) {
-        self.current_connection = None;
-    }
-
-    /// Generate a rule for the current connection being handled by this server.
+    /// Generate a rule for the selected connection in the queue.
     /// Matches on user ID && process path && IP dst && l4 port && l4 protocol.
     /// TODO: Consider including process hash for extra strictness.
-    /// Returns `none` if there is no current connection.
-    /// * `is_allow`: Whether the rule for this connection should allow or deny the flow.
+    /// Returns `None` if queue is empty.
     fn make_rule(
         &self,
         action: constants::Action,
         duration: constants::Duration,
     ) -> Option<pb::Rule> {
-        // Noop if there's no connection trapped.
-        self.current_connection.as_ref()?;
-
-        let conn = &self.current_connection.as_ref().unwrap().connection;
+        let queued = self.connection_queue.get(self.selected_connection)?;
+        let conn = &queued.event.connection;
 
         // Build up an array of "safe"ish default operators to match this process's
         // specific connection, though this can obviously be better validated/configured
@@ -354,26 +347,29 @@ impl App {
         })
     }
 
-    fn send_rule(&self, rule: pb::Rule) {
-        let send_res = self.rule_sender.try_send(rule);
-        if let Err(err) = send_res {
-            // Shouldn't really happen so bail here.
-            panic!("Unable to send rule: {err}");
-        }
-    }
-
     fn make_and_send_rule(&mut self, action: constants::Action, duration: constants::Duration) {
         if let Some(rule) = self.make_rule(action, duration) {
-            self.send_rule(rule);
-            self.clear_connection();
+            // Remove the selected connection and send rule via its channel
+            if let Some(queued) = self.connection_queue.remove(self.selected_connection) {
+                let _ = queued.rule_tx.send(rule);
+                // Adjust selection if needed
+                if !self.connection_queue.is_empty() {
+                    self.selected_connection =
+                        self.selected_connection.min(self.connection_queue.len() - 1);
+                } else {
+                    self.selected_connection = 0;
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::event::ConnectionEvent;
     use crate::opensnitch_proto::pb::{Connection, Rule};
     use std::time::SystemTime;
+    use tokio::sync::oneshot;
 
     use super::*;
 
@@ -392,9 +388,9 @@ mod tests {
         .expect("new failed");
     }
 
-    /// Test that making a rule with no "current connection" generates a noop.
+    /// Test that making a rule with empty queue generates None.
     #[tokio::test]
-    async fn test_make_rule_no_conn() {
+    async fn test_make_rule_empty_queue() {
         let app = App::new(
             &"127.0.0.1:65534".to_string(),
             &"deny".to_string(),
@@ -403,7 +399,7 @@ mod tests {
         )
         .expect("new failed");
 
-        assert!(app.current_connection.is_none());
+        assert!(app.connection_queue.is_empty());
 
         let maybe_rule = app.make_rule(constants::Action::Allow, constants::Duration::Once);
         assert!(maybe_rule.is_none());
@@ -429,7 +425,7 @@ mod tests {
         }
     }
 
-    /// Test that making a rule with a valid "current connection" generates something meaningful.
+    /// Test that making a rule with a queued connection generates something meaningful.
     #[tokio::test]
     async fn test_make_rule_has_conn() {
         let mut app = App::new(
@@ -441,9 +437,13 @@ mod tests {
         .expect("new failed");
 
         let fake_conn = make_fake_connection();
-        app.current_connection = Some(ConnectionEvent {
-            connection: fake_conn.clone(),
-            expiry_ts: SystemTime::now() + app.connection_disposition_timeout,
+        let (tx, _rx) = oneshot::channel();
+        app.connection_queue.push_back(QueuedConnection {
+            event: ConnectionEvent {
+                connection: fake_conn.clone(),
+                expiry_ts: SystemTime::now() + std::time::Duration::from_secs(60),
+            },
+            rule_tx: tx,
         });
 
         let maybe_rule = app
