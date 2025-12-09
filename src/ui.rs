@@ -10,10 +10,10 @@ use crate::constants;
 
 /// Button labels and their actions.
 const BUTTONS: &[(&str, constants::Action, constants::Duration)] = &[
-    (" Allow [A] ", constants::Action::Allow, constants::Duration::UntilRestart),
-    (" Deny [D] ", constants::Action::Deny, constants::Duration::UntilRestart),
-    (" Allow Forever [J] ", constants::Action::Allow, constants::Duration::Always),
-    (" Deny Forever [L] ", constants::Action::Deny, constants::Duration::Always),
+    (" Allow(A) ", constants::Action::Allow, constants::Duration::UntilRestart),
+    (" Deny(D) ", constants::Action::Deny, constants::Duration::UntilRestart),
+    (" Allow Forever(J) ", constants::Action::Allow, constants::Duration::Always),
+    (" Deny Forever(L) ", constants::Action::Deny, constants::Duration::Always),
 ];
 
 impl Widget for &App {
