@@ -5,11 +5,56 @@ use ratatui::{
     widgets::{Block, BorderType, List, ListItem, Paragraph, Widget},
 };
 
-use crate::app::App;
+use crate::app::{App, Button};
+use crate::constants;
+
+/// Button labels and their actions.
+const BUTTONS: &[(&str, constants::Action, constants::Duration)] = &[
+    (" Allow [A] ", constants::Action::Allow, constants::Duration::UntilRestart),
+    (" Deny [D] ", constants::Action::Deny, constants::Duration::UntilRestart),
+    (" Allow Forever [J] ", constants::Action::Allow, constants::Duration::Always),
+    (" Deny Forever [L] ", constants::Action::Deny, constants::Duration::Always),
+];
 
 impl Widget for &App {
-    /// Renders the user interface widgets.
     fn render(self, area: Rect, buf: &mut Buffer) {
+        // Delegate to stateful render (buttons already updated before draw)
+        self.render_inner(area, buf);
+    }
+}
+
+impl App {
+    /// Updates button areas based on layout. Call before drawing.
+    pub fn update_button_areas(&mut self, area: Rect) {
+        self.buttons.clear();
+        if self.current_connection.is_none() {
+            return;
+        }
+        let areas = Layout::vertical([
+            Constraint::Max(6),
+            Constraint::Max(9),
+            Constraint::Max(5),
+            Constraint::Max(2),
+        ])
+        .split(area);
+        let conn_inner = Block::bordered().inner(areas[1]);
+        // Buttons on last line of connection panel
+        let btn_y = conn_inner.y + conn_inner.height.saturating_sub(1);
+        let mut x = conn_inner.x;
+        for (label, action, duration) in BUTTONS {
+            let w = label.len() as u16;
+            if x + w <= conn_inner.x + conn_inner.width {
+                self.buttons.push(Button {
+                    area: Rect::new(x, btn_y, w, 1),
+                    action: *action,
+                    duration: *duration,
+                });
+            }
+            x += w + 1; // 1 space between buttons
+        }
+    }
+
+    fn render_inner(&self, area: Rect, buf: &mut Buffer) {
         let areas = Layout::vertical([
             Constraint::Max(6),
             Constraint::Max(9),
@@ -35,17 +80,16 @@ impl Widget for &App {
         stats_paragraph.render(areas[0], buf);
 
         // Connection controls
+        let has_conn = self.current_connection.is_some();
         let connection_block = Block::bordered()
             .title(" New Connections ")
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded)
-            .title_style(match &self.current_connection {
-                None => Style::default(),
-                Some(_) => Style::default().bold(),
-            })
-            .style(match &self.current_connection {
-                None => Style::default().fg(Color::Cyan),
-                Some(_) => Style::default().fg(Color::Yellow),
+            .title_style(if has_conn { Style::default().bold() } else { Style::default() })
+            .style(if has_conn {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Cyan)
             });
 
         let connection_text = self.format_connection_panel();
@@ -54,6 +98,23 @@ impl Widget for &App {
             .bg(Color::Black);
 
         connection_paragraph.render(areas[1], buf);
+
+        // Render buttons if connection pending
+        if has_conn {
+            for btn in &self.buttons {
+                let label = BUTTONS.iter()
+                    .find(|(_, a, d)| std::mem::discriminant(a) == std::mem::discriminant(&btn.action)
+                        && std::mem::discriminant(d) == std::mem::discriminant(&btn.duration))
+                    .map(|(l, _, _)| *l)
+                    .unwrap_or("");
+                let style = match btn.action {
+                    constants::Action::Allow => Style::default().fg(Color::Black).bg(Color::Green),
+                    constants::Action::Deny => Style::default().fg(Color::Black).bg(Color::Red),
+                    _ => Style::default(),
+                };
+                buf.set_string(btn.area.x, btn.area.y, label, style);
+            }
+        }
 
         // Alerts list
         let alerts_block = Block::bordered()

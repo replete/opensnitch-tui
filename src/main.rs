@@ -12,6 +12,9 @@ pub mod serde_impl;
 pub mod server;
 pub mod ui;
 
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::execute;
+
 /// Main.
 /// # Errors
 /// Returns an error if there was bad input at init.
@@ -21,6 +24,7 @@ async fn main() -> color_eyre::Result<()> {
 
     color_eyre::install()?;
     let terminal = ratatui::init();
+    execute!(std::io::stdout(), EnableMouseCapture)?;
     let app = app::App::new(
         matches.get_one::<String>("ip_port").unwrap(),
         matches.get_one::<String>("default_action").unwrap(),
@@ -29,6 +33,7 @@ async fn main() -> color_eyre::Result<()> {
     )
     .expect("Initialization failed: ");
     let result = app.run(terminal).await;
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }

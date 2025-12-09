@@ -4,7 +4,8 @@ use crate::opensnitch_proto::pb;
 use crate::server::OpenSnitchUIServer;
 use ratatui::{
     DefaultTerminal,
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind},
+    layout::Rect,
 };
 
 use crate::constants;
@@ -15,6 +16,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tonic::Status;
+
+/// Clickable button in the UI.
+#[derive(Debug, Clone, Copy)]
+pub struct Button {
+    pub area: Rect,
+    pub action: constants::Action,
+    pub duration: constants::Duration,
+}
 
 /// Application.
 #[derive(Debug)]
@@ -52,6 +61,8 @@ pub struct App {
     /// The duration up to which app waits for user to make a disposition
     /// (allow/deny) on a trapped connection.
     connection_disposition_timeout: std::time::Duration,
+    /// Clickable button areas for mouse interaction.
+    pub buttons: Vec<Button>,
 }
 
 impl App {
@@ -123,6 +134,7 @@ impl App {
             default_action: maybe_default_action.unwrap(),
             temp_rule_lifetime: maybe_temp_rule_lifetime.unwrap(),
             connection_disposition_timeout,
+            buttons: Vec::new(),
         })
     }
 
@@ -159,6 +171,9 @@ impl App {
                         draw_needed = true;
                         self.handle_key_events(key_event)?;
                     }
+                    crossterm::event::Event::Mouse(mouse_event) => {
+                        draw_needed |= self.handle_mouse_event(mouse_event);
+                    }
                     _ => {}
                 },
                 Event::App(app_event) => {
@@ -173,7 +188,10 @@ impl App {
                 }
             }
             if draw_needed {
-                terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
+                terminal.draw(|frame| {
+                    self.update_button_areas(frame.area());
+                    frame.render_widget(&self, frame.area());
+                })?;
                 draw_needed = false;
             }
         }
@@ -215,6 +233,24 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Handles mouse events. Returns true if a redraw is needed.
+    pub fn handle_mouse_event(&mut self, event: crossterm::event::MouseEvent) -> bool {
+        if event.kind != MouseEventKind::Up(MouseButton::Left) {
+            return false;
+        }
+        for btn in &self.buttons {
+            if event.column >= btn.area.x
+                && event.column < btn.area.x + btn.area.width
+                && event.row >= btn.area.y
+                && event.row < btn.area.y + btn.area.height
+            {
+                self.make_and_send_rule(btn.action, btn.duration);
+                return true;
+            }
+        }
+        false
     }
 
     /// Handles the tick event of the terminal.
