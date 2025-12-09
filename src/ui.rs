@@ -223,7 +223,7 @@ impl App {
                 let src = format!("{}:{}", info.connection.src_ip, info.connection.src_port);
                 let dst = format!("{}:{}", info.connection.dst_ip, info.connection.dst_port);
                 format!(
-                    "\n{}\n{} → {} [{}]\nuid:{} pid:{} {}",
+                    "\n{}\n{} → {} [{}]\nuid:{} pid:{} ppath:{}",
                     dst_host,
                     src,
                     dst,
