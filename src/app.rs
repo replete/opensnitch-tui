@@ -362,34 +362,22 @@ impl App {
 
         let conn = &self.current_connection.as_ref().unwrap().connection;
 
-        // Build up an array of "safe"ish default operators to match this process's
-        // specific connection, though this can obviously be better validated/configured
-        // in the future.
-        // This could have also been implemented with enum+trait magic, but using a simple
-        // Operator factory lets us pass this vector into the larger Rule we are creating.
-        let operators = vec![
-            operator_util::match_user_id(conn.user_id),
-            operator_util::match_proc_path(&conn.process_path),
-            operator_util::match_dst_ip(&conn.dst_ip),
-            operator_util::match_dst_port(conn.dst_port),
-            operator_util::match_protocol(&conn.protocol),
-        ];
+        // Create simple hostname-only rules (like hand-crafted rules) when hostname is
+        // available. Falls back to IP-based rules when no hostname is provided.
+        // This creates minimal rules that just match the destination, avoiding complex
+        // list operators with user.id, process.path, port, and protocol.
+        let (dst_operator, dst_label) = if conn.dst_host.is_empty() {
+            (operator_util::match_dst_ip(&conn.dst_ip), conn.dst_ip.clone())
+        } else {
+            (operator_util::match_dst_host(&conn.dst_host), conn.dst_host.clone())
+        };
 
         let action_str = action.get_str();
         let duration = String::from(duration.get_str());
-        let pretty_proc_path = conn.process_path.clone().replace('/', "-");
-        let maybe_operator_json = serde_json::to_string(&operators);
-        // Shouldn't really happen due to serde_impl.rs, ideally something caught at build time.
-        assert!(
-            maybe_operator_json.is_ok(),
-            "Operator list JSON serialization failed: {}",
-            maybe_operator_json.unwrap_err()
-        );
 
         Some(pb::Rule {
             created: 0,
-            // TODO: Leading slash gets turned into double-dash, may be annoying
-            name: format!("{action_str}-{duration}-simple-via-tui-{pretty_proc_path}"),
+            name: format!("{action_str}-{dst_label}"),
             description: String::default(),
             enabled: true,
             precedence: false,
@@ -397,11 +385,11 @@ impl App {
             action: String::from(action_str),
             duration,
             operator: Some(pb::Operator {
-                r#type: String::from(constants::RuleType::List.get_str()),
-                operand: String::from(constants::Operand::List.get_str()),
-                data: maybe_operator_json.unwrap(),
+                r#type: dst_operator.r#type.clone(),
+                operand: dst_operator.operand.clone(),
+                data: dst_operator.data.clone(),
                 sensitive: false,
-                list: operators,
+                list: Vec::default(),
             }),
         })
     }

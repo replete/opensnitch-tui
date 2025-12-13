@@ -35,6 +35,23 @@ pub fn match_dst_ip(ip: &str) -> Operator {
     }
 }
 
+/// Creates a hostname-based operator using regexp matching.
+/// Converts hostname to a regexp pattern that matches the domain and all subdomains.
+/// e.g., "example.com" -> "^(.*\\.)?example\\.com$"
+#[must_use]
+pub fn match_dst_host(hostname: &str) -> Operator {
+    // Escape dots in hostname for regexp, then create pattern matching domain + subdomains
+    let escaped = hostname.replace('.', "\\.");
+    let pattern = format!("^(.*\\.)?{escaped}$");
+    Operator {
+        r#type: String::from(constants::RuleType::Regexp.get_str()),
+        operand: String::from(constants::Operand::DstHost.get_str()),
+        data: pattern,
+        sensitive: false,
+        list: Vec::default(),
+    }
+}
+
 #[must_use]
 pub fn match_dst_port(port: u32) -> Operator {
     Operator {
