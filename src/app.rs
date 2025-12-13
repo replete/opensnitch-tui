@@ -190,6 +190,10 @@ impl App {
                     crossterm::event::Event::Mouse(mouse_event) => {
                         draw_needed |= self.handle_mouse_event(mouse_event);
                     }
+                    crossterm::event::Event::Resize(_, _) => {
+                        // Terminal was resized - trigger redraw to update button positions
+                        draw_needed = true;
+                    }
                     _ => {}
                 },
                 Event::App(app_event) => {
