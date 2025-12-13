@@ -19,9 +19,34 @@ The GUI may still be used separately (see below) for features the TUI doesn't ye
 
 ## Usage
 
-The OpenSnitch daemon connects to a control plane server (like this TUI) to talk gRPC. OpenSnitch's [default config](https://github.com/evilsocket/opensnitch/wiki/Configurations) uses a Unix domain socket for transport. Unfortunately, the HTTP+gRPC library stack used by the TUI cannot currently support domain sockets (see [open issue](https://github.com/hyperium/tonic/issues/742)).
+The OpenSnitch daemon connects to a control plane server (like this TUI) to talk gRPC. This TUI now supports **both Unix domain sockets and TCP** for transport.
 
-As a result, usage of the TUI requires the gRPC transport to use TCP. In the OpenSnitch daemon config (`/etc/opensnitchd/default-config.json`), change the `Address` field to a loopback-assigned IP address and port like below:
+### Unix Domain Socket (Recommended)
+
+OpenSnitch's [default config](https://github.com/evilsocket/opensnitch/wiki/Configurations) uses a Unix domain socket. To use the TUI with the default configuration:
+
+```sh
+# The TUI will bind to a Unix socket
+$ opensnitch-tui --bind "unix:///tmp/osui.sock"
+```
+
+Make sure your OpenSnitch daemon config (`/etc/opensnitchd/default-config.json`) has the `Address` field set to the same Unix socket:
+```json
+{
+    "Server": {
+        "Address": "unix:///tmp/osui.sock"
+    }
+}
+```
+
+For better security, you can use the recommended per-user socket path:
+```sh
+$ opensnitch-tui --bind "unix:///run/user/1000/opensnitch/osui.sock"
+```
+
+### TCP Transport (Alternative)
+
+Alternatively, you can use TCP transport. In the OpenSnitch daemon config (`/etc/opensnitchd/default-config.json`), change the `Address` field to a loopback-assigned IP address and port:
 ```sh
 $ head -n4 /etc/opensnitchd/default-config.json
 {
@@ -30,11 +55,12 @@ $ head -n4 /etc/opensnitchd/default-config.json
         "Address":"127.0.0.1:50051",
 ```
 
-Remember to update your invocation of the official GUI (`opensnitch-ui`) to pass a new flag that binds to this IP and TCP port (`--socket "127.0.0.1:50051"`).
+Then run the TUI with:
+```sh
+$ opensnitch-tui --bind "127.0.0.1:50051"
+```
 
-The corresponding flag for this TUI looks like `--bind "127.0.0.1:50051"`.
-
-The instructions above apply when the OpenSnitch daemon and GUI/TUI are running on the same node (loopback address); that address can be modified to any other IP/port combination.
+Remember to update your invocation of the official GUI (`opensnitch-ui`) to pass the matching socket flag (e.g., `--socket "unix:///tmp/osui.sock"` or `--socket "127.0.0.1:50051"`).
 
 **Note that only one of the GUI or TUI can run at one time, so kill the `opensnitch-ui` or `opensnitch-tui` process to run the other.**
 

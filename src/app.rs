@@ -17,6 +17,13 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tonic::Status;
 
+/// Represents the bind address - either TCP or Unix socket
+#[derive(Debug, Clone)]
+pub enum BindAddress {
+    Tcp(SocketAddr),
+    Unix(String),
+}
+
 /// Clickable button in the UI.
 #[derive(Debug, Clone, Copy)]
 pub struct Button {
@@ -52,8 +59,8 @@ pub struct App {
     pub current_connection: Option<ConnectionEvent>,
     /// Rule sender.
     pub rule_sender: mpsc::Sender<pb::Rule>,
-    /// gRPC server IP and port to bind to.
-    bind_address: SocketAddr,
+    /// gRPC server address to bind to (TCP or Unix socket).
+    bind_address: BindAddress,
     /// Default action to be sent to connected daemons.
     default_action: constants::DefaultAction,
     /// Temporary rule lifetime.
@@ -76,17 +83,26 @@ impl App {
         temp_rule_lifetime: &String,
         connection_disposition_timeout_in: &u64,
     ) -> Result<Self, String> {
-        if bind_string.starts_with("unix") {
-            return Err(String::from("Unix domain sockets not supported"));
-        }
-        let maybe_bind_addr = bind_string.parse::<SocketAddr>();
-        if maybe_bind_addr.is_err() {
-            return Err(format!(
-                "Error parsing bind address '{}' : {}",
-                bind_string,
-                maybe_bind_addr.unwrap_err()
-            ));
-        }
+        // Parse the bind address - could be TCP or Unix socket
+        let bind_address = if bind_string.starts_with("unix://") {
+            // Unix socket path
+            let path = bind_string.strip_prefix("unix://").unwrap().to_string();
+            if path.is_empty() {
+                return Err(String::from("Unix socket path cannot be empty"));
+            }
+            BindAddress::Unix(path)
+        } else {
+            // TCP address
+            let maybe_bind_addr = bind_string.parse::<SocketAddr>();
+            if maybe_bind_addr.is_err() {
+                return Err(format!(
+                    "Error parsing bind address '{}' : {}",
+                    bind_string,
+                    maybe_bind_addr.unwrap_err()
+                ));
+            }
+            BindAddress::Tcp(maybe_bind_addr.unwrap())
+        };
 
         let maybe_default_action = constants::DefaultAction::new(default_action_in);
         if maybe_default_action.is_err() {
@@ -130,7 +146,7 @@ impl App {
             notification_sender: Arc::new(Mutex::new(dummy_notification_sender)),
             current_connection: None,
             rule_sender: dummy_rule_sender,
-            bind_address: maybe_bind_addr.unwrap(),
+            bind_address,
             default_action: maybe_default_action.unwrap(),
             temp_rule_lifetime: maybe_temp_rule_lifetime.unwrap(),
             connection_disposition_timeout,
@@ -148,7 +164,7 @@ impl App {
         let (rule_sender, rule_receiver) = mpsc::channel(1);
         self.rule_sender = rule_sender;
         self.server.spawn_and_run(
-            self.bind_address,
+            self.bind_address.clone(),
             self.events.sender.clone(),
             &self.notification_sender,
             rule_receiver,
@@ -426,6 +442,41 @@ mod tests {
             &60,
         )
         .expect("new failed");
+    }
+
+    /// Test Unix socket address parsing.
+    #[tokio::test]
+    async fn test_unix_socket() {
+        let app = App::new(
+            &"unix:///tmp/test.sock".to_string(),
+            &"deny".to_string(),
+            &"12h".to_string(),
+            &60,
+        )
+        .expect("new failed");
+
+        match app.bind_address {
+            BindAddress::Unix(path) => {
+                assert_eq!(path, "/tmp/test.sock");
+            }
+            BindAddress::Tcp(_) => {
+                panic!("Expected Unix socket, got TCP");
+            }
+        }
+    }
+
+    /// Test that empty Unix socket path is rejected.
+    #[tokio::test]
+    async fn test_unix_socket_empty_path() {
+        let result = App::new(
+            &"unix://".to_string(),
+            &"deny".to_string(),
+            &"12h".to_string(),
+            &60,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Unix socket path cannot be empty");
     }
 
     /// Test that making a rule with no "current connection" generates a noop.

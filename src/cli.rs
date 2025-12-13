@@ -10,7 +10,7 @@ pub fn setup() -> Command {
         Arg::new("ip_port")
         .long("bind")
         .default_value("127.0.0.1:50051")
-        .help("IP address and port for OpenSnitch gRPC server to bind to. Format: \"A.B.C.D:port\" or \"[A:B:C::D]:port\".")
+        .help("Address for OpenSnitch gRPC server to bind to. Format: \"A.B.C.D:port\", \"[A:B:C::D]:port\", or \"unix:///path/to/socket\".")
     )
     .arg(
         Arg::new("dispo_seconds")
@@ -31,6 +31,11 @@ pub fn setup() -> Command {
         .value_parser(["until restart", "always", "once", "12h", "1h", "30m", "15m", "5m", "30s",]) // TODO: Single source of truth from constants.rs?
         .default_value("12h")
         .help("Lifetime of temporary rules created by TUI.")
+    )
+    .arg(
+        Arg::new("logfile")
+        .long("logfile")
+        .help("Path to log file for debug output. If not specified, no logging occurs.")
     )
     .max_term_width(100)
 }

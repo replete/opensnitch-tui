@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::time::{Duration, SystemTime};
 
 use tokio::time::timeout;
@@ -6,7 +5,9 @@ use tonic::Streaming;
 use tonic::{Request, Response, Status, transport::Server};
 
 use crate::alert;
+use crate::app::BindAddress;
 use crate::event::{AppEvent, ConnectionEvent, Event, PingEvent};
+use crate::log;
 use crate::opensnitch_proto::pb;
 use crate::opensnitch_proto::pb::ui_server::Ui;
 use crate::opensnitch_proto::pb::ui_server::UiServer;
@@ -15,6 +16,13 @@ use crate::{constants, opensnitch_json};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
+
+#[cfg(unix)]
+use tokio::net::UnixListener;
+#[cfg(unix)]
+use tokio_stream::wrappers::UnixListenerStream;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Debug)]
 pub struct OpenSnitchUIGrpcServer {
@@ -40,6 +48,7 @@ impl Ui for OpenSnitchUIGrpcServer {
         &self,
         request: Request<pb::PingRequest>,
     ) -> Result<Response<pb::PingReply>, Status> {
+        log::debug(&format!("ping() called from {:?}", request.remote_addr()));
         let event = PingEvent {
             peer: request.remote_addr(),
             stats: request.get_ref().stats.as_ref().unwrap().clone(),
@@ -52,6 +61,7 @@ impl Ui for OpenSnitchUIGrpcServer {
             id: request.get_ref().id,
         };
 
+        log::debug("ping() responding OK");
         Ok(Response::new(reply))
     }
 
@@ -59,6 +69,7 @@ impl Ui for OpenSnitchUIGrpcServer {
         &self,
         request: Request<pb::Alert>,
     ) -> Result<Response<pb::MsgResponse>, Status> {
+        log::info(&format!("post_alert() called from {:?}", request.remote_addr()));
         let alert = request.get_ref();
         let _ = self
             .server_to_app_event_sender
@@ -71,6 +82,7 @@ impl Ui for OpenSnitchUIGrpcServer {
             id: request.get_ref().id,
         };
 
+        log::debug("post_alert() responding OK");
         Ok(Response::new(reply))
     }
 
@@ -78,12 +90,15 @@ impl Ui for OpenSnitchUIGrpcServer {
         &self,
         request: Request<pb::Connection>,
     ) -> Result<Response<pb::Rule>, Status> {
+        log::info(&format!("ask_rule() called from {:?}", request.remote_addr()));
+        log::debug(&format!("ask_rule() connection: {:?}", request.get_ref()));
         // In theory, the current proto spec and OpenSnitch daemon design doesn't seem
         // to permit opening concurrent `AskRule` requests.
         // If this was to be supported in the future, we'd want to mix in some UID
         // for request routing/identification as well.
         let askrule_permit = self.askrule_lock.try_lock();
         if askrule_permit.is_err() {
+            log::warn("ask_rule() rejected - another request already in progress");
             return Err(Status::resource_exhausted(
                 "Only one AskRule request permitted at a time",
             ));
@@ -97,14 +112,24 @@ impl Ui for OpenSnitchUIGrpcServer {
             .server_to_app_event_sender
             .send(Event::App(Box::new(AppEvent::AskRule(connection))));
 
+        log::debug("ask_rule() waiting for rule from app...");
         let mut recv_lock = self.app_to_server_rule_receiver.lock().await;
         let maybe_rule = timeout(self.connection_disposition_timeout, recv_lock.recv()).await;
         match maybe_rule {
             Ok(possibly_rule) => match possibly_rule {
-                Some(rule) => Ok(Response::new(rule)),
-                None => Err(Status::internal("sender somehow closed")),
+                Some(rule) => {
+                    log::info(&format!("ask_rule() returning rule: {:?}", rule.name));
+                    Ok(Response::new(rule))
+                }
+                None => {
+                    log::error("ask_rule() sender closed unexpectedly");
+                    Err(Status::internal("sender somehow closed"))
+                }
             },
-            Err(err) => Err(Status::internal(format!("No rule created: {err}"))),
+            Err(err) => {
+                log::warn(&format!("ask_rule() timed out: {}", err));
+                Err(Status::internal(format!("No rule created: {err}")))
+            }
         }
     }
 
@@ -112,6 +137,8 @@ impl Ui for OpenSnitchUIGrpcServer {
         &self,
         request: Request<pb::ClientConfig>,
     ) -> Result<Response<pb::ClientConfig>, Status> {
+        log::info(&format!("subscribe() called from {:?}", request.remote_addr()));
+        log::debug(&format!("subscribe() client config: {:?}", request.get_ref()));
         // Relfect back most of the rx'ed config.
         // Be a little oversmart here and rewrite the config JSON blob with the only k-v
         // the daemon really cares about - default action.
@@ -123,9 +150,13 @@ impl Ui for OpenSnitchUIGrpcServer {
         match maybe_config_json {
             Ok(json) => {
                 reply.config = json;
+                log::info(&format!("subscribe() responding with default_action={}", self.default_action));
                 Ok(Response::new(reply))
             }
-            Err(err) => Err(Status::internal(err.to_string())),
+            Err(err) => {
+                log::error(&format!("subscribe() failed to serialize config: {}", err));
+                Err(Status::internal(err.to_string()))
+            }
         }
     }
 
@@ -133,6 +164,7 @@ impl Ui for OpenSnitchUIGrpcServer {
         &self,
         request: Request<Streaming<pb::NotificationReply>>,
     ) -> Result<Response<Self::NotificationsStream>, Status> {
+        log::info(&format!("notifications() stream started from {:?}", request.remote_addr()));
         let mut in_stream = request.into_inner();
         let (app_to_server_notification_tx, app_to_server_notification_rx) = mpsc::channel(128);
         let tx = self.server_to_app_event_sender.clone();
@@ -141,6 +173,7 @@ impl Ui for OpenSnitchUIGrpcServer {
         // A pre-existing receiver on the old sender should also eventually close since its sender will have closed.
         let mut sender_chan = self.app_to_server_notification_sender.lock().await;
         *sender_chan = app_to_server_notification_tx;
+        log::debug("notifications() stream channel established");
 
         tokio::spawn(async move {
             loop {
@@ -196,10 +229,9 @@ impl Ui for OpenSnitchUIGrpcServer {
 pub struct OpenSnitchUIServer {}
 
 impl OpenSnitchUIServer {
-    /// Note for address: Unix domain sockets unsupported due to upstream "authority" handling bug
     pub fn spawn_and_run(
         &self,
-        address: SocketAddr,
+        address: BindAddress,
         server_to_app_event_sender: mpsc::UnboundedSender<Event>,
         app_to_server_notification_sender: &Arc<
             Mutex<mpsc::Sender<Result<pb::Notification, Status>>>,
@@ -212,6 +244,7 @@ impl OpenSnitchUIServer {
         let notification_sender = Arc::clone(app_to_server_notification_sender);
         let rule_receiver = Mutex::new(app_to_server_rule_receiver);
         let default_action_str = String::from(default_action.get_str());
+
         tokio::spawn(async move {
             let grpc_server = OpenSnitchUIGrpcServer {
                 server_to_app_event_sender: server_to_app_event_sender_handle,
@@ -221,10 +254,81 @@ impl OpenSnitchUIServer {
                 connection_disposition_timeout,
                 askrule_lock: Mutex::default(),
             };
-            let _ = Server::builder()
-                .add_service(UiServer::new(grpc_server))
-                .serve(address)
-                .await;
+
+            match address {
+                BindAddress::Tcp(addr) => {
+                    log::info(&format!("Starting TCP gRPC server on {}", addr));
+                    let result = Server::builder()
+                        .add_service(UiServer::new(grpc_server))
+                        .serve(addr)
+                        .await;
+                    if let Err(e) = result {
+                        log::error(&format!("TCP server error: {}", e));
+                    }
+                }
+                #[cfg(unix)]
+                BindAddress::Unix(path) => {
+                    log::info(&format!("Starting Unix socket gRPC server at {}", path));
+
+                    // Remove existing socket file if it exists
+                    if std::path::Path::new(&path).exists() {
+                        log::debug(&format!("Removing existing socket file: {}", path));
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            log::warn(&format!("Failed to remove existing socket: {}", e));
+                        }
+                    }
+
+                    // Check parent directory permissions
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        log::debug(&format!("Socket parent directory: {:?}", parent));
+                        match std::fs::metadata(parent) {
+                            Ok(meta) => {
+                                log::debug(&format!("Parent dir permissions: {:o}", meta.permissions().mode()));
+                            }
+                            Err(e) => {
+                                log::error(&format!("Cannot access parent directory: {}", e));
+                            }
+                        }
+                    }
+
+                    // Create Unix listener
+                    log::info(&format!("Binding Unix socket at: {}", path));
+                    let listener = match UnixListener::bind(&path) {
+                        Ok(l) => {
+                            log::info(&format!("Successfully bound Unix socket at {}", path));
+                            l
+                        }
+                        Err(e) => {
+                            log::error(&format!("Failed to bind Unix socket at {}: {}", path, e));
+                            return;
+                        }
+                    };
+
+                    // Verify socket was created
+                    if std::path::Path::new(&path).exists() {
+                        log::info(&format!("Socket file created: {}", path));
+                    } else {
+                        log::error(&format!("Socket file NOT found after bind: {}", path));
+                    }
+
+                    let incoming = UnixListenerStream::new(listener);
+
+                    log::info("Starting gRPC server with Unix socket incoming stream");
+                    log::info("Server ready and waiting for connections from opensnitchd...");
+                    let result = Server::builder()
+                        .add_service(UiServer::new(grpc_server))
+                        .serve_with_incoming(incoming)
+                        .await;
+                    if let Err(e) = result {
+                        log::error(&format!("Unix socket server error: {}", e));
+                    }
+                    log::info("Unix socket gRPC server stopped");
+                }
+                #[cfg(not(unix))]
+                BindAddress::Unix(_) => {
+                    log::error("Unix sockets are not supported on this platform");
+                }
+            }
         });
     }
 }
