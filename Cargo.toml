@@ -1,6 +1,6 @@
 [package]
 name = "opensnitch-tui"
-version = "0.0.2"
+version = "0.0.5-replete"
 edition = "2024"
 
 [dependencies]
