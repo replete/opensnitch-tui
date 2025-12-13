@@ -1,52 +1,39 @@
-# OpenSnitch TUI
+# OpenSnitch TUI (Devcontainer Fork)
 
-A Terminal UI control plane for [OpenSnitch](https://github.com/evilsocket/opensnitch), an interactive application firewall for Linux inspired by Little Snitch.
+A Terminal UI control plane for [OpenSnitch](https://github.com/evilsocket/opensnitch), customized for devcontainer environments.
 
 ![TUI screenshot](static/screenshot.png)
 
-This TUI is built in Rust, namely using the `tokio`, `tonic`, and `ratatui` crates. This program currently implements a subset of functions that the [OpenSnitch GUI](https://github.com/evilsocket/opensnitch/wiki/Getting-started) supports. Some features may never be supported due to complexity (e.g. support for multiple nodes).
+This fork is optimized for use in devcontainers where you want simple hostname-based firewall rules. When you allow/deny a connection, it creates minimal rules matching just the destination hostname (using regexp to include subdomains), rather than complex rules matching user ID, process path, port, and protocol.
 
-## Features
-
-This TUI tries to replace the official OpenSnitch GUI in single-node environments where it may be inconvenient/impossible to use the GUI.
-
-* View high-level daemon runtime stats
-* View trapped connection attempts that require a disposition (allow/deny)
-* Easy keybindings to allow/deny trapped network flows
-* View incoming alerts
-
-The GUI may still be used separately (see below) for features the TUI doesn't yet support.
-
-## Usage
-
-The OpenSnitch daemon connects to a control plane server (like this TUI) to talk gRPC. This TUI now supports **both Unix domain sockets and TCP** for transport.
-
-### Unix Domain Socket (Recommended)
-
-OpenSnitch's [default config](https://github.com/evilsocket/opensnitch/wiki/Configurations) uses a Unix domain socket. To use the TUI with the default configuration:
-
-```sh
-# The TUI will bind to a Unix socket
-$ opensnitch-tui --bind "unix:///tmp/osui.sock"
-```
-
-Make sure your OpenSnitch daemon config (`/etc/opensnitchd/default-config.json`) has the `Address` field set to the same Unix socket:
+**Example rule created by this TUI:**
 ```json
 {
-    "Server": {
-        "Address": "unix:///tmp/osui.sock"
-    }
+  "name": "allow-registry.npmjs.org",
+  "operator": {
+    "type": "regexp",
+    "operand": "dest.host",
+    "data": "^(.*\\.)?registry\\.npmjs\\.org$"
+  }
 }
 ```
 
-For better security, you can use the recommended per-user socket path:
-```sh
-$ opensnitch-tui --bind "unix:///run/user/1000/opensnitch/osui.sock"
-```
+This is based on [amalbansode/opensnitch-tui](https://github.com/amalbansode/opensnitch-tui).
 
-### TCP Transport (Alternative)
+## Features
 
-Alternatively, you can use TCP transport. In the OpenSnitch daemon config (`/etc/opensnitchd/default-config.json`), change the `Address` field to a loopback-assigned IP address and port:
+* View trapped connection attempts that require a disposition (allow/deny)
+* Easy keybindings to allow/deny trapped network flows
+* Creates simple hostname-based rules (regexp matching domain + subdomains)
+* Falls back to IP-based rules when hostname is unavailable
+
+## Usage
+
+The OpenSnitch daemon connects to a control plane server (like this TUI) to talk gRPC.
+
+### TCP Transport (Recommended)
+
+In the OpenSnitch daemon config (`/etc/opensnitchd/default-config.json`), set the `Address` field to a loopback IP address and port:
 ```sh
 $ head -n4 /etc/opensnitchd/default-config.json
 {
@@ -60,7 +47,22 @@ Then run the TUI with:
 $ opensnitch-tui --bind "127.0.0.1:50051"
 ```
 
-Remember to update your invocation of the official GUI (`opensnitch-ui`) to pass the matching socket flag (e.g., `--socket "unix:///tmp/osui.sock"` or `--socket "127.0.0.1:50051"`).
+Remember to update your invocation of the official GUI (`opensnitch-ui`) to pass the matching socket flag (e.g., `--socket "127.0.0.1:50051"`).
+
+### Unix Domain Sockets (Not Fully Working)
+
+While this TUI can bind to Unix domain sockets (e.g., `--bind "unix:///tmp/osui.sock"`), there is currently an **incompatibility between the Go gRPC client in opensnitchd and the Rust gRPC server (tonic/h2)**.
+
+The issue: Go's gRPC library sends the Unix socket path as the HTTP/2 `:authority` header, but Rust's h2 library strictly validates this header per HTTP/2 spec and rejects socket paths as invalid URIs. This results in `PROTOCOL_ERROR` / `RST_STREAM` errors.
+
+The official Python OpenSnitch UI works because Python's grpcio library is more permissive about authority header validation.
+
+**Workaround options:**
+1. Use TCP transport (recommended, as shown above)
+2. Patch opensnitchd to add `grpc.WithAuthority("localhost")` when dialing Unix sockets
+3. Wait for upstream fixes in either [h2](https://github.com/hyperium/h2/pull/487) or grpc-go
+
+See [tonic#826](https://github.com/hyperium/tonic/issues/826) and [h2#487](https://github.com/hyperium/h2/pull/487) for more details.
 
 **Note that only one of the GUI or TUI can run at one time, so kill the `opensnitch-ui` or `opensnitch-tui` process to run the other.**
 
